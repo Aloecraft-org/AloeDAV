@@ -88,7 +88,7 @@ class VEvent(BaseModel):
     class Config:
         use_enum_values = True
 
-def to_vcalendar_string(self) -> str:
+    def to_vcalendar_string(self) -> str:
         """
         Serializes the event into a valid iCalendar (ICS) string.
         """
