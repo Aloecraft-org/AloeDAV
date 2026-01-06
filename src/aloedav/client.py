@@ -66,6 +66,27 @@ class AloeDAV:
 """
         self._create("MKCALENDAR", url,body)
 
+    def _extract_name_from_href(self, href):
+        return href.rstrip('/').split('/')[-1]
+
+    def delete_object(self, collection_id, filename, etag=None):
+        url = path.join(self.host, self.username, collection_id, filename)
+        headers = {}
+        if etag:
+            # WebDAV requires quoted ETags in If-Match, even if we strip them internally
+            headers["If-Match"] = f'"{etag}"' if not etag.startswith('"') else etag
+        
+        response = requests.delete(url, headers=headers, auth=(self.username, self.password))
+        
+        if response.status_code in [200, 204]:
+            print(f"Deleted {filename}")
+            return True
+        elif response.status_code == 412:
+            print(f"Delete failed: ETag mismatch for {filename}")
+            return False
+        else:
+            print(f"Failed to delete: {response.status_code}")
+            return False
     def list_collections(self):
         get_collections = lambda d: d.get('multistatus',{}).get('response',{})
         get_contenttype = lambda c: c.get('propstat',{}).get('prop',{}).get('getcontenttype')
@@ -85,13 +106,19 @@ class AloeDAV:
         return [(c.get('href',''), get_contenttype(c)) for c in get_collections(doc) if type(c.get('propstat',{})) == dict]
 
 
-    def list_calendar_objects(self, calendar_id, component_type="VEVENT"):
+    def list_calendar_objects(self, calendar_id, component_type="VEVENT", start: datetime = None, end: datetime = None):
         """
         Lists entries in a specific calendar, filtering by component type.
         component_type options: 'VEVENT', 'VTODO', 'VJOURNAL'
         """
         url = path.join(self.host, self.username, calendar_id)
         
+        time_range_xml = ""
+        if start and end:
+            # CalDAV usually expects UTC YYYYMMDDTHHMMSSZ
+            fmt = "%Y%m%dT%H%M%SZ"
+            time_range_xml = f'<C:time-range start="{start.strftime(fmt)}" end="{end.strftime(fmt)}"/>'
+
         # Uses standard CalDAV filter to only return specific component types
         body = f"""<?xml version="1.0" encoding="utf-8" ?>
 <C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
@@ -101,7 +128,9 @@ class AloeDAV:
     </D:prop>
     <C:filter>
         <C:comp-filter name="VCALENDAR">
-            <C:comp-filter name="{component_type}"/>
+            <C:comp-filter name="{component_type}">
+                {time_range_xml}
+            </C:comp-filter>
         </C:comp-filter>
     </C:filter>
 </C:calendar-query>"""
@@ -119,10 +148,15 @@ class AloeDAV:
             # propstat is a list if there are mixed status codes; usually index 0 is the '200 OK' one
             if isinstance(propstat, list): propstat = propstat[0]
             
-            cal_data = propstat.get('prop', {}).get('C:calendar-data')
+            props = propstat.get('prop', {})
+            cal_data = props.get('C:calendar-data')
+            # Fallback for ETag keys if namespace prefixes vary (D:getetag vs getetag)
+            etag = props.get('D:getetag', props.get('getetag'))
+            if etag and isinstance(etag, str):
+                etag = etag.strip('"')
             if cal_data:
-                # Returns the full href and the raw ICS data
-                results.append({'href': r.get('href'), 'data': cal_data})
+                # Returns the full href, etag, and the raw ICS data
+                results.append({'href': r.get('href'), 'etag': etag, 'data': cal_data})
         return results
 
     def list_addressbook_entries(self, addressbook_id):
@@ -149,9 +183,14 @@ class AloeDAV:
             propstat = r.get('propstat', {})
             if isinstance(propstat, list): propstat = propstat[0]
             
-            card_data = propstat.get('prop', {}).get('CR:address-data')
+            props = propstat.get('prop', {})
+            # Check for data with matching namespace or fallback
+            card_data = props.get('C:address-data', props.get('CR:address-data'))
+            etag = props.get('D:getetag', props.get('getetag'))
+            if etag and isinstance(etag, str):
+                etag = etag.strip('"')
             if card_data:
-                results.append({'href': r.get('href'), 'data': card_data})
+                results.append({'href': r.get('href'), 'etag': etag, 'data': card_data})
         return results
 
     def get_calendar_object(self, calendar_id, object_filename):
@@ -163,10 +202,12 @@ class AloeDAV:
         response = requests.get(url, auth=(self.username, self.password))
         
         if response.status_code == 200:
-            return response.text
+            etag = response.headers.get("ETag")
+            if etag: etag = etag.strip('"')
+            return response.text, etag
         else:
             print(f"Failed to retrieve calendar object: {response.status_code}")
-            return None
+            return None, None
 
     def get_addressbook_object(self, addressbook_id, object_filename):
         """
@@ -177,11 +218,12 @@ class AloeDAV:
         response = requests.get(url, auth=(self.username, self.password))
         
         if response.status_code == 200:
-            return response.text
+            etag = response.headers.get("ETag")
+            if etag: etag = etag.strip('"')
+            return response.text, etag
         else:
             print(f"Failed to retrieve contact: {response.status_code}")
-            return None
-        
+            return None, None
 
     def create_vcard(self, addressbook_id, vcard_obj: VCard):
         """
@@ -226,7 +268,7 @@ class AloeDAV:
         
         headers = {"Content-Type": "text/vcard; charset=utf-8"}
         if etag:
-            headers["If-Match"] = etag
+            headers["If-Match"] = f'"{etag}"' if not etag.startswith('"') else etag
 
         response = requests.put(url, data=vcard_data.encode('utf-8'), headers=headers, auth=(self.username, self.password))
 
@@ -280,10 +322,10 @@ class AloeDAV:
         
         headers = {"Content-Type": "text/calendar; charset=utf-8"}
         if etag:
-            headers["If-Match"] = etag
+            headers["If-Match"] = f'"{etag}"' if not etag.startswith('"') else etag
 
         response = requests.put(url, data=ics_data.encode('utf-8'), headers=headers, auth=(self.username, self.password))
-
+        
         if response.status_code in [200, 204]:
             print(f"Calendar object updated: {filename}")
             return True
@@ -294,169 +336,119 @@ class AloeDAV:
             print(f"Failed to update object: {response.status_code} - {response.text}")
             return False
 
-if __name__ == "main":
+if __name__ == "__main__":
+    import uuid
 
+    # Configuration
     RADICALE_HOST = "http://vera-webdav-svc.vera.svc.cluster.local:5232"
-    NEW_USERNAME = "test"
-    aloedav = AloeDAV(RADICALE_HOST, NEW_USERNAME, "")
+    USERNAME = "test"
+    PASSWORD = ""  # If your server requires a password, add it here.
+    
+    # Init Client
+    aloedav = AloeDAV(RADICALE_HOST, USERNAME, PASSWORD)
 
-    aloedav.create_addressbook("display_name", "description", "addressbook_id")
-    aloedav.create_calendar("display_name", "description", "calendar_id", components=CalendarComponents.VEVENT|CalendarComponents.VTODO|CalendarComponents.VJOURNAL)
-    print(aloedav.list_collections())
+    # 1. Setup Collections
+    print("--- Setting up Collections ---")
+    abook_id = "addressbook_test"
+    cal_id = "calendar_test"
+    
+    aloedav.create_addressbook("Test Contacts", "A verified addressbook", abook_id)
+    aloedav.create_calendar("Test Calendar", "A verified calendar", cal_id)
+    
+    print("Collections available:", [c[0] for c in aloedav.list_collections()])
+    print("-" * 30)
 
+    # 2. Test Addressbook Lifecycle
+    print("\n--- Testing Addressbook Lifecycle ---")
+    
     # Create
-    new_contact = VCard(
-        fn="Jane Doe",
-        given_name="Jane",
-        categories=['someone', 'human'],
-        family_name="Doe",
-        emails=["jane@example.com"]
+    contact_uid = str(uuid.uuid4())
+    contact = VCard(
+        uid=contact_uid,
+        fn="Delete Me",
+        given_name="Delete",
+        family_name="Me",
+        emails=["delete.me@example.com"]
     )
+    fname = aloedav.create_vcard(abook_id, contact)
+    print(f"Created Contact: {fname}")
 
-    filename = aloedav.create_vcard("contacts", new_contact)
+    # List & Verify ETag
+    entries = aloedav.list_addressbook_entries(abook_id)
+    target_entry = next((e for e in entries if fname in e['href']), None)
+    
+    if target_entry:
+        print(f"Found in list. Href: {target_entry['href']}, ETag: {target_entry.get('etag')}")
+        
+        # Get specific object
+        clean_name = aloedav._extract_name_from_href(target_entry['href'])
+        content, etag = aloedav.get_addressbook_object(abook_id, clean_name)
+        print(f"Fetched directly. ETag matches: {etag == target_entry.get('etag')}")
 
+        # Update
+        print(f"Updating {clean_name} (checking ETag logic)...")
+        contact.given_name = "UpdatedName"
+        if aloedav.update_vcard(abook_id, clean_name, contact, etag=etag):
+            print("Update successful.")
+            # Refresh ETag after update for deletion
+            content, etag = aloedav.get_addressbook_object(abook_id, clean_name)
+        else:
+            print("Update failed (Expected if ETag quoting is missing).")
+
+        # Delete
+        print(f"Deleting {clean_name} with ETag {etag}...")
+        success = aloedav.delete_object(abook_id, clean_name, etag=etag)
+        if success: 
+            print("Deletion successful.")
+        else:
+            print("Deletion failed.")
+    else:
+        print("Error: Created contact not found in list.")
+
+
+    # 3. Test Calendar Lifecycle
+    print("\n--- Testing Calendar Lifecycle ---")
+    
+    # Create Event
+    event_uid = f"event-{uuid.uuid4()}"
     event = VEvent(
-        uid="event-123-456@example.com",
-        summary="Team Standup Meeting",
-        dtstart=datetime(2026, 1, 6, 10, 0, 0),
-        dtend=datetime(2026, 1, 6, 10, 30, 0),
-        location="Conference Room A",
-        description="Daily team standup to sync on progress",
-        organizer_name="Alice Johnson",
-        organizer_email="alice@example.com",
-        status=EventStatus.CONFIRMED,
-        transparency=Transparency.OPAQUE,
-        recurrence_rule=RecurrenceRule(
-            frequency=RecurrenceFrequency.DAILY,
-            interval=1,
-            until=datetime(2026, 3, 31),
-        ),
-        attendees=[
-            Attendee(
-                email="bob@example.com",
-                name="Bob Smith",
-                participation_status="ACCEPTED",
-            ),
-            Attendee(
-                email="charlie@example.com",
-                name="Charlie Brown",
-                participation_status="TENTATIVE",
-            ),
-        ],
-        alarms=[
-            Alarm(action="DISPLAY", trigger_minutes=15, description="Reminder"),
-        ],
-        categories=["WORK", "MEETING"],
+        uid=event_uid,
+        summary="Temporary Event",
+        dtstart=datetime(2026, 1, 10, 12, 0, 0),
+        dtend=datetime(2026, 1, 10, 13, 0, 0)
     )
+    fname = aloedav.create_calendar_object(cal_id, event)
+    print(f"Created Event: {fname}")
 
-
-    todo = VTodo(
-        uid="todo-789-012@example.com",
-        summary="Prepare quarterly report",
-        dtstart=datetime(2026, 1, 6, 9, 0, 0),
-        due=datetime(2026, 1, 15, 17, 0, 0),
-        description="Compile Q4 metrics and analysis for stakeholder presentation",
-        status=TodoStatus.IN_PROCESS,
-        priority=2,
-        percent_complete=45,
-        organizer_name="Alice Johnson",
-        organizer_email="alice@example.com",
-        attendees=[
-            Attendee(
-                email="david@example.com",
-                name="David Lee",
-                role="REQ-PARTICIPANT",
-                participation_status="ACCEPTED",
-            ),
-        ],
-        alarms=[
-            Alarm(action="DISPLAY", trigger_minutes=1440, description="Due tomorrow"),
-            Alarm(action="DISPLAY", trigger_minutes=60, description="Due in 1 hour"),
-        ],
-        categories=["WORK", "REPORTING"],
-        location="Office",
+    # List with Time Filter
+    print("Listing events between 2026-01-09 and 2026-01-11...")
+    events = aloedav.list_calendar_objects(
+        cal_id, 
+        component_type="VEVENT", 
+        start=datetime(2026, 1, 9), 
+        end=datetime(2026, 1, 11)
     )
     
-    recurring_todo = VTodo(
-        uid="todo-recurring@example.com",
-        summary="Weekly code review",
-        dtstart=datetime(2026, 1, 6, 14, 0, 0),
-        due=datetime(2026, 1, 9, 17, 0, 0),
-        status=TodoStatus.COMPLETED,
-        completed=datetime(2026, 1, 9, 16, 30, 0),
-        percent_complete=100,
-        priority=3,
-        recurrence_rule=RecurrenceRule(
-            frequency=RecurrenceFrequency.WEEKLY,
-            interval=1,
-        ),
-        categories=["WORK", "DEVELOPMENT"],
-    )
+    target_event = next((e for e in events if fname in e['href']), None)
     
-
-    vcard = VCard(
-        fn="John Doe",
-        given_name="John",
-        family_name="Doe",
-        categories=['someone', 'human'],
-        emails=["john.doe@example.com"],
-        phones=[
-            Phone(number="+1-555-123-4567", type=PhoneType.CELL, is_preferred=True),
-            Phone(number="+1-555-987-6543", type=PhoneType.WORK),
-        ],
-        addresses=[
-            Address(
-                street="123 Main St",
-                city="Springfield",
-                state="IL",
-                postal_code="62701",
-                country="USA",
-                type=AddressType.HOME,
-            )
-        ],
-        organization="Acme Corp",
-        job_title="Software Engineer",
-        url="https://johndoe.com",
-        notes="Primary contact for project X",
-    )
-
-    journal_entry = VJournal(
-        uid="journal-001@example.com",
-        dtstart=datetime(2026, 1, 5, 18, 30, 0),
-        summary="Reflection on Q1 Planning",
-        description="Today was productive. We finalized the Q1 roadmap and got buy-in from stakeholders. "
-                    "The team showed great enthusiasm for the new initiatives. Need to follow up on resource allocation by end of week.",
-        status=JournalStatus.FINAL,
-        classification=JournalClass.PRIVATE,
-        organizer_name="Vera",
-        organizer_email="vera@example.com",
-        categories=["WORK", "PLANNING"],
-        tags=["productivity", "teamwork", "quarterly-planning"],
-    )
-
-    daily_journal = VJournal(
-        uid="daily-journal@example.com",
-        dtstart=datetime(2026, 1, 6, 22, 0, 0),
-        summary="Daily Reflection",
-        description="A space for daily thoughts and reflections.",
-        status=JournalStatus.DRAFT,
-        classification=JournalClass.PRIVATE,
-        recurrence_rule=RecurrenceRule(
-            frequency=RecurrenceFrequency.DAILY,
-            interval=1,
-        ),
-        alarms=[
-            Alarm(action="DISPLAY", trigger_minutes=120, description="Evening reflection reminder"),
-        ],
-        categories=["PERSONAL"],
-        tags=["daily", "reflection"],
-    )
-    
-    # Update (Modify the object and send it back)
-    new_contact.organization = "New Corp"
-    aloedav.update_vcard("contacts", filename, new_contact)
-    print(aloedav.list_addressbook_entries("addressbook_id"))
-    print(aloedav.list_calendar_objects("calendar_id", component_type="VEVENT"))
-
-    aloedav.get_calendar_object(self, calendar_id, object_filename)
-    aloedav.get_addressbook_object(self, addressbook_id, object_filename)
+    if target_event:
+        print(f"Found event. ETag: {target_event.get('etag')}")
+        
+        # Get
+        clean_name = aloedav._extract_name_from_href(target_event['href'])
+        content, etag = aloedav.get_calendar_object(cal_id, clean_name)
+        
+        # Update
+        print(f"Updating {clean_name} (checking ETag logic)...")
+        event.summary = "Updated Summary"
+        if aloedav.update_calendar_object(cal_id, clean_name, event, etag=etag):
+            print("Update successful.")
+            content, etag = aloedav.get_calendar_object(cal_id, clean_name)
+        else:
+            print("Update failed (Expected if ETag quoting is missing).")
+        
+        # Delete
+        print(f"Deleting {clean_name}...")
+        aloedav.delete_object(cal_id, clean_name, etag=etag)
+    else:
+        print("Error: Created event not found in time-filtered list.")
