@@ -7,6 +7,7 @@ class CalendarComponents(Flag):
     VJOURNAL=auto()
     VTODO=auto()
 
+# MIKE: Unused Class
 class Calendar(BaseModel):
     href:str
     color:str
