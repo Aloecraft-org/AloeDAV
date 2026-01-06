@@ -42,6 +42,7 @@ PRODID:-//Example Corp//CalDAV Client//EN
 BEGIN:VEVENT
 UID:20260106T120000Z-123456@example.com
 DTSTAMP:20260106T120000Z
+DTSTART:20260106T130000Z
 SUMMARY:Project Planning Meeting
 DESCRIPTION:We will discuss the roadmap for the upcoming quarter, specificall
  y focusing on the integration of the new AI modules and the legacy backend s
