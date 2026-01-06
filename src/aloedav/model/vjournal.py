@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
-
+from aloedav.model.utils import unfold_lines
 
 class JournalStatus(str, Enum):
     DRAFT = "DRAFT"
@@ -89,7 +89,122 @@ class VJournal(BaseModel):
     
     class Config:
         use_enum_values = True
+    @classmethod
+    def from_vcalendar_string(cls, ics_string: str) -> "VJournal":
+        lines = unfold_lines(ics_string)
+        data = {
+            "alarms": [],
+            "categories": [],
+            "tags": [],
+            "attachments": []
+        }
+        
+        current_context = "ROOT"
+        current_alarm = None
 
+        def parse_dt(val):
+            # rudimentary parsing for YYYYMMDDTHHMMSS[Z]
+            fmt = "%Y%m%dT%H%M%S"
+            if val.endswith("Z"):
+                val = val[:-1]
+            try:
+                return datetime.strptime(val, fmt)
+            except ValueError:
+                return datetime.utcnow() # Fallback
+
+        for line in lines:
+            if ":" not in line: continue
+            
+            key_part, value = line.split(":", 1)
+            
+            params = {}
+            if ";" in key_part:
+                parts = key_part.split(";")
+                key = parts[0].upper()
+                for p in parts[1:]:
+                    if "=" in p:
+                        k, v = p.split("=", 1)
+                        params[k.upper()] = v
+                    else:
+                        params[p.upper()] = True
+            else:
+                key = key_part.upper()
+
+            # State Machine
+            if key == "BEGIN":
+                if value == "VCALENDAR": current_context = "VCALENDAR"
+                elif value == "VJOURNAL": current_context = "VJOURNAL"
+                elif value == "VALARM":
+                    current_context = "VALARM"
+                    current_alarm = {"trigger_minutes": 0}
+                continue
+            elif key == "END":
+                if value == "VALARM":
+                    if current_alarm:
+                        data["alarms"].append(Alarm(**current_alarm))
+                    current_context = "VJOURNAL"
+                    current_alarm = None
+                elif value == "VJOURNAL":
+                    current_context = "VCALENDAR"
+                continue
+
+            # Context Parsing
+            if current_context == "VJOURNAL":
+                if key == "UID": data["uid"] = value
+                elif key == "DTSTAMP": data["dtstamp"] = parse_dt(value)
+                elif key == "SUMMARY": data["summary"] = value
+                elif key == "DESCRIPTION": 
+                    data["description"] = value.replace("\\n", "\n").replace("\\,", ",").replace("\\;", ";")
+                elif key == "DTSTART": data["dtstart"] = parse_dt(value)
+                elif key == "STATUS": data["status"] = value
+                elif key == "CLASS": data["classification"] = value
+                elif key == "SEQUENCE": data["sequence"] = int(value)
+                elif key == "ORGANIZER":
+                    if value.lower().startswith("mailto:"):
+                        data["organizer_email"] = value[7:]
+                    else:
+                        data["organizer_email"] = value
+                    data["organizer_name"] = params.get("CN")
+                elif key == "CATEGORIES":
+                    # Naive split, real world might need to differentiate tags if convention exists
+                    cats = value.split(",")
+                    data["categories"].extend(cats)
+                elif key == "RELATED-TO": data["related_to"] = value
+                elif key == "URL": data["url"] = value
+                elif key == "RRULE":
+                    r_parts = value.split(";")
+                    r_data = {}
+                    for rp in r_parts:
+                        if "=" not in rp: continue
+                        k, v = rp.split("=")
+                        if k == "FREQ": r_data["frequency"] = v
+                        elif k == "INTERVAL": r_data["interval"] = int(v)
+                        elif k == "COUNT": r_data["count"] = int(v)
+                        elif k == "UNTIL": r_data["until"] = parse_dt(v)
+                    if "frequency" in r_data:
+                        data["recurrence_rule"] = RecurrenceRule(**r_data)
+                elif key == "ATTACH":
+                    # Basic handling for URL attachments
+                    mime = params.get("FMTTYPE", "application/octet-stream")
+                    # Try to derive a filename from URL or default
+                    fname = "attachment"
+                    if "/" in value:
+                        fname = value.split("/")[-1]
+                    data["attachments"].append(Attachment(
+                        filename=fname,
+                        mime_type=mime,
+                        url=value
+                    ))
+
+            elif current_context == "VALARM":
+                if key == "ACTION": current_alarm["action"] = value
+                elif key == "DESCRIPTION": current_alarm["description"] = value
+                elif key == "TRIGGER":
+                    val_clean = "".join(c for c in value if c.isdigit())
+                    if val_clean:
+                         current_alarm["trigger_minutes"] = int(val_clean)
+
+        return cls(**data)
 
     def to_vcalendar_string(self) -> str:
         """
@@ -203,44 +318,70 @@ class VJournal(BaseModel):
         
         return "\r\n".join(lines)
 
-
 # Example usage
 if __name__ == "__main__":
-    # Single journal entry
-    journal_entry = VJournal(
-        uid="journal-001@example.com",
-        dtstart=datetime(2026, 1, 5, 18, 30, 0),
-        summary="Reflection on Q1 Planning",
-        description="Today was productive. We finalized the Q1 roadmap and got buy-in from stakeholders. "
-                    "The team showed great enthusiasm for the new initiatives. Need to follow up on resource allocation by end of week.",
-        status=JournalStatus.FINAL,
-        classification=JournalClass.PRIVATE,
-        organizer_name="Vera",
-        organizer_email="vera@example.com",
-        categories=["WORK", "PLANNING"],
-        tags=["productivity", "teamwork", "quarterly-planning"],
-    )
+    TEST_VJOURNAL_SIMPLE = """BEGIN:VCALENDAR
+BEGIN:VJOURNAL
+UID:journal-simple
+SUMMARY:Dear Diary
+DESCRIPTION:Today was a good day.
+DTSTART:20260105T183000Z
+END:VJOURNAL
+END:VCALENDAR"""
+
+    TEST_VJOURNAL_COMPLEX = """BEGIN:VCALENDAR
+BEGIN:VJOURNAL
+UID:journal-complex
+DTSTAMP:20260105T190000Z
+SUMMARY:Project Notes
+DESCRIPTION:Discussion points:\\n1. Architecture\\n2. 
+ Deserialization logic
+STATUS:FINAL
+CLASS:PRIVATE
+CATEGORIES:WORK,MEETING
+ATTACH;FMTTYPE=application/pdf:http://example.com/specs.pdf
+END:VJOURNAL
+END:VCALENDAR"""
+
+    print("--- Testing Deserialization (Simple) ---")
+    j = VJournal.from_vcalendar_string(TEST_VJOURNAL_SIMPLE)
+    print(f"Parsed Summary: {j.summary}")
+    print(f"Parsed Start: {j.dtstart}")
+    if j.summary == "Dear Diary":
+        print("[PASS] Simple VJournal parsed.")
+    else:
+        print("[FAIL] Simple parsing mismatch.")
+
+    print("\n--- Testing Deserialization (Complex) ---")
+    jc = VJournal.from_vcalendar_string(TEST_VJOURNAL_COMPLEX)
+    print(f"Parsed Description: {jc.description.replace(chr(10), ' ')}")
+    print(f"Parsed Status: {jc.status}")
     
-    print(journal_entry.model_dump_json(indent=2))
-    
-    # Recurring daily journal (like a diary)
-    print("\n")
-    daily_journal = VJournal(
-        uid="daily-journal@example.com",
-        dtstart=datetime(2026, 1, 6, 22, 0, 0),
-        summary="Daily Reflection",
-        description="A space for daily thoughts and reflections.",
-        status=JournalStatus.DRAFT,
-        classification=JournalClass.PRIVATE,
-        recurrence_rule=RecurrenceRule(
-            frequency=RecurrenceFrequency.DAILY,
-            interval=1,
-        ),
-        alarms=[
-            Alarm(action="DISPLAY", trigger_minutes=120, description="Evening reflection reminder"),
-        ],
-        categories=["PERSONAL"],
-        tags=["daily", "reflection"],
-    )
-    
-    print(daily_journal.model_dump_json(indent=2))
+    # Check folding and escaping
+    if "Deserialization logic" in jc.description and "\n" in jc.description:
+        print("[PASS] Description folding and unescaping handled.")
+    else:
+        print(f"[FAIL] Description issue: {jc.description}")
+
+    if jc.attachments and jc.attachments[0].mime_type == "application/pdf":
+        print("[PASS] Attachment parsed.")
+        print(f"Attachment URL: {jc.attachments[0].url}")
+    else:
+        print("[FAIL] Attachment missing or incorrect.")
+
+
+    # outputs:
+    # > --- Testing Deserialization (Simple) ---
+    # > Parsed Summary: Dear Diary
+    # > Parsed Start: 2026-01-05 18:30:00
+    # > [PASS] Simple VJournal parsed.
+
+    # > --- Testing Deserialization (Complex) ---
+    # > Parsed Description: Discussion points: 1. Architecture 2. Deserialization logic
+    # > Parsed Status: FINAL
+    # > [PASS] Description folding and unescaping handled.
+    # > [PASS] Attachment parsed.
+    # > Attachment URL: http://example.com/specs.pdf
+
+    # > /tmp/ipykernel_35348/2774852803.py:49: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    # > class VJournal(BaseModel):

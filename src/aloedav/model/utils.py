@@ -113,3 +113,33 @@ END:VCARD"""
             print(f"[FAIL] ADR parsing mismatch: {adr}")
     elif 'ADR' in str(testdata.TEST_VCARD_FOLDED): # Only fail if ADR was actually in input
          print(f"[FAIL] ADR not found or not tuple: {adr}")
+
+# Outputs:
+
+# > --- Testing Unfold Logic ---
+# > Original Folded Input:
+# > BEGIN:VCARD
+# > VERSION:3.0
+# > FN:Folded Line Tester
+# > N:Tester;Folded;;;
+# > NOTE:This is a long note that is folded over multiple lines to test the unfo
+# >  lding logic of the utility function. It should appear as a single continuous
+# >   line after processing.
+# > ADR;TYPE=WORK:;;100 Waters Edge;Baytown;LA;30314;United States of Amer
+# >  ica
+# > END:VCARD
+# > 
+# > Unfolded Lines:
+# > 1: BEGIN:VCARD
+# > 2: VERSION:3.0
+# > 3: FN:Folded Line Tester
+# > 4: N:Tester;Folded;;;
+# > 5: NOTE:This is a long note that is folded over multiple lines to test the unfolding logic of the utility function. It should appear as a single continuous line after processing.
+# > 6: ADR;TYPE=WORK:;;100 Waters Edge;Baytown;LA;30314;United States of America
+# > 7: END:VCARD
+# > 
+# > [PASS] 'NOTE' line unfolded correctly (newlines removed).
+# > 
+# > --- Testing Parse Logic ---
+# > [PASS] VERSION parsed correctly.
+# > [PASS] ADR (Address) parsed with parameters correctly.

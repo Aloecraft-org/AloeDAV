@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
+from aloedav.model.utils import unfold_lines
 
 class TodoStatus(str, Enum):
     NEEDS_ACTION = "NEEDS-ACTION"
@@ -84,6 +85,121 @@ class VTodo(BaseModel):
     class Config:
         use_enum_values = True
 
+    @classmethod
+    def from_vcalendar_string(cls, ics_string: str) -> "VTodo":
+        lines = unfold_lines(ics_string)
+        data = {
+            "attendees": [],
+            "alarms": [],
+            "categories": [],
+        }
+        
+        current_context = "ROOT"
+        current_alarm = None
+
+        def parse_dt(val):
+            # rudimentary parsing for YYYYMMDDTHHMMSS[Z]
+            fmt = "%Y%m%dT%H%M%S"
+            if val.endswith("Z"):
+                val = val[:-1]
+            try:
+                return datetime.strptime(val, fmt)
+            except ValueError:
+                return datetime.utcnow() # Fallback
+
+        for line in lines:
+            if ":" not in line: continue
+            
+            # Split key/params and value
+            key_part, value = line.split(":", 1)
+            
+            # Extract params
+            params = {}
+            if ";" in key_part:
+                parts = key_part.split(";")
+                key = parts[0].upper()
+                for p in parts[1:]:
+                    if "=" in p:
+                        k, v = p.split("=", 1)
+                        params[k.upper()] = v
+                    else:
+                        params[p.upper()] = True
+            else:
+                key = key_part.upper()
+
+            # State Machine transitions
+            if key == "BEGIN":
+                if value == "VCALENDAR":
+                    current_context = "VCALENDAR"
+                elif value == "VTODO":
+                    current_context = "VTODO"
+                elif value == "VALARM":
+                    current_context = "VALARM"
+                    current_alarm = {"trigger_minutes": 15} # default
+                continue
+            elif key == "END":
+                if value == "VALARM":
+                    if current_alarm:
+                        data["alarms"].append(Alarm(**current_alarm))
+                    current_context = "VTODO"
+                    current_alarm = None
+                elif value == "VTODO":
+                    current_context = "VCALENDAR"
+                continue
+
+            # Parsing properties based on context
+            if current_context == "VTODO":
+                if key == "UID": data["uid"] = value
+                elif key == "SUMMARY": data["summary"] = value
+                elif key == "DTSTART": data["dtstart"] = parse_dt(value)
+                elif key == "DTSTAMP": data["dtstamp"] = parse_dt(value)
+                elif key == "DUE": data["due"] = parse_dt(value)
+                elif key == "COMPLETED": data["completed"] = parse_dt(value)
+                elif key == "DURATION": data["duration"] = value
+                elif key == "DESCRIPTION": 
+                    data["description"] = value.replace("\\n", "\n").replace("\\,", ",").replace("\\;", ";")
+                elif key == "LOCATION": data["location"] = value
+                elif key == "STATUS": data["status"] = value
+                elif key == "CLASS": data["classification"] = value
+                elif key == "SEQUENCE": data["sequence"] = int(value)
+                elif key == "PRIORITY": data["priority"] = int(value)
+                elif key == "PERCENT-COMPLETE": data["percent_complete"] = int(value)
+                elif key == "CATEGORIES": data["categories"] = value.split(",")
+                elif key == "ORGANIZER":
+                    if value.lower().startswith("mailto:"):
+                        data["organizer_email"] = value[7:]
+                    else:
+                        data["organizer_email"] = value
+                    data["organizer_name"] = params.get("CN")
+                elif key == "ATTENDEE":
+                    email = value[7:] if value.lower().startswith("mailto:") else value
+                    name = params.get("CN")
+                    role = params.get("ROLE", "REQ-PARTICIPANT")
+                    partstat = params.get("PARTSTAT", "NEEDS-ACTION")
+                    data["attendees"].append(Attendee(email=email, name=name, role=role, participation_status=partstat))
+                elif key == "RRULE":
+                    r_parts = value.split(";")
+                    r_data = {}
+                    for rp in r_parts:
+                        if "=" not in rp: continue
+                        k, v = rp.split("=")
+                        if k == "FREQ": r_data["frequency"] = v
+                        elif k == "INTERVAL": r_data["interval"] = int(v)
+                        elif k == "COUNT": r_data["count"] = int(v)
+                        elif k == "UNTIL": r_data["until"] = parse_dt(v)
+                    if "frequency" in r_data:
+                        data["recurrence_rule"] = RecurrenceRule(**r_data)
+
+            elif current_context == "VALARM":
+                if key == "ACTION": current_alarm["action"] = value
+                elif key == "DESCRIPTION": current_alarm["description"] = value
+                elif key == "TRIGGER":
+                    # Simple parse for standard -PT15M format
+                    val_clean = "".join(c for c in value if c.isdigit())
+                    if val_clean:
+                         current_alarm["trigger_minutes"] = int(val_clean)
+
+        return cls(**data)
 
     def to_vcalendar_string(self) -> str:
         """
@@ -190,51 +306,72 @@ class VTodo(BaseModel):
 
 # Example usage
 if __name__ == "__main__":
-    todo = VTodo(
-        uid="todo-789-012@example.com",
-        summary="Prepare quarterly report",
-        dtstart=datetime(2026, 1, 6, 9, 0, 0),
-        due=datetime(2026, 1, 15, 17, 0, 0),
-        description="Compile Q4 metrics and analysis for stakeholder presentation",
-        status=TodoStatus.IN_PROCESS,
-        priority=2,
-        percent_complete=45,
-        organizer_name="Alice Johnson",
-        organizer_email="alice@example.com",
-        attendees=[
-            Attendee(
-                email="david@example.com",
-                name="David Lee",
-                role="REQ-PARTICIPANT",
-                participation_status="ACCEPTED",
-            ),
-        ],
-        alarms=[
-            Alarm(action="DISPLAY", trigger_minutes=1440, description="Due tomorrow"),
-            Alarm(action="DISPLAY", trigger_minutes=60, description="Due in 1 hour"),
-        ],
-        categories=["WORK", "REPORTING"],
-        location="Office",
-    )
+    # Mock Data for VTodo deserialization test
+    TEST_VTODO_SIMPLE = """BEGIN:VCALENDAR
+BEGIN:VTODO
+UID:todo-simple
+SUMMARY:Buy Milk
+STATUS:NEEDS-ACTION
+END:VTODO
+END:VCALENDAR"""
+
+    TEST_VTODO_COMPLEX = """BEGIN:VCALENDAR
+BEGIN:VTODO
+UID:todo-complex
+SUMMARY:Project Deadline
+DESCRIPTION:Complete the full refactor of the 
+ codebase including deserialization.
+STATUS:IN-PROCESS
+PERCENT-COMPLETE:45
+DUE:20260120T170000Z
+CATEGORIES:WORK,URGENT
+BEGIN:VALARM
+ACTION:DISPLAY
+TRIGGER:-PT15M
+DESCRIPTION:Deadline approaching
+END:VALARM
+END:VTODO
+END:VCALENDAR"""
+
+    print("--- Testing Deserialization (Simple) ---")
+    todo = VTodo.from_vcalendar_string(TEST_VTODO_SIMPLE)
+    print(f"Parsed Summary: {todo.summary}")
+    print(f"Parsed Status: {todo.status}")
+    if todo.summary == "Buy Milk" and todo.status == TodoStatus.NEEDS_ACTION:
+        print("[PASS] Simple VTodo parsed.")
+    else:
+        print("[FAIL] Simple parsing mismatch.")
+
+    print("\n--- Testing Deserialization (Complex) ---")
+    todo_c = VTodo.from_vcalendar_string(TEST_VTODO_COMPLEX)
+    print(f"Parsed Summary: {todo_c.summary}")
+    print(f"Parsed Description: {todo_c.description.replace(chr(10), ' ')}")
+    print(f"Parsed Due: {todo_c.due}")
     
-    print(todo.model_dump_json(indent=2))
-    
-    # Example of a completed recurring task
-    recurring_todo = VTodo(
-        uid="todo-recurring@example.com",
-        summary="Weekly code review",
-        dtstart=datetime(2026, 1, 6, 14, 0, 0),
-        due=datetime(2026, 1, 9, 17, 0, 0),
-        status=TodoStatus.COMPLETED,
-        completed=datetime(2026, 1, 9, 16, 30, 0),
-        percent_complete=100,
-        priority=3,
-        recurrence_rule=RecurrenceRule(
-            frequency=RecurrenceFrequency.WEEKLY,
-            interval=1,
-        ),
-        categories=["WORK", "DEVELOPMENT"],
-    )
-    
-    print("\n")
-    print(recurring_todo.model_dump_json(indent=2))
+    # Check folding logic (newline in description should be removed/merged)
+    if "refactor of the codebase" in todo_c.description:
+        print("[PASS] Folding handled.")
+    else:
+        print(f"[FAIL] Description folding issue: '{todo_c.description}'")
+
+    if len(todo_c.alarms) == 1 and todo_c.alarms[0].trigger_minutes == 15:
+        print("[PASS] Alarm parsed.")
+    else:
+        print("[FAIL] Alarm parsing issue.")
+
+    # outputs:
+
+    # > --- Testing Deserialization (Simple) ---
+    # > Parsed Summary: Buy Milk
+    # > Parsed Status: NEEDS-ACTION
+    # > [PASS] Simple VTodo parsed.
+    # > 
+    # > --- Testing Deserialization (Complex) ---
+    # > Parsed Summary: Project Deadline
+    # > Parsed Description: Complete the full refactor of the codebase including deserialization.
+    # > Parsed Due: 2026-01-20 17:00:00
+    # > [PASS] Folding handled.
+    # > [PASS] Alarm parsed.
+    # > 
+    # > /tmp/ipykernel_35348/4270628224.py:44: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    # >   class VTodo(BaseModel):
