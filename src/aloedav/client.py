@@ -2,7 +2,7 @@ from os import path
 import xmltodict
 import requests
 from datetime import datetime
-from typing import Tuple, Union
+from typing import Tuple, Union, List, Dict
 from aloedav.model.calendar import CalendarComponents
 from aloedav.model.vcard    import VCard, Address, PhoneType, Phone, AddressType
 from aloedav.model.vevent   import VEvent, Attendee, Alarm, RecurrenceRule, RecurrenceFrequency, Transparency, EventClass, EventStatus
@@ -254,6 +254,87 @@ class AloeDAV:
         else:
             print(f"Warning: Unknown component type in {filename}")
             return None, etag
+
+    def get_sync_token(self, collection_id: str) -> Union[str, None]:
+        """
+        Retrieves the current sync-token for a collection.
+        """
+        url = path.join(self.host, self.username, collection_id)
+        body = """<?xml version="1.0" encoding="utf-8" ?>
+<D:propfind xmlns:D="DAV:">
+    <D:prop>
+        <D:sync-token/>
+    </D:prop>
+</D:propfind>"""
+        
+        response = requests.request("PROPFIND", url, data=body, headers={"Depth": "0"}, auth=(self.username, self.password))
+        
+        if response.status_code != 207:
+            return None
+
+        doc = xmltodict.parse(response.content)
+        try:
+            ms = doc.get('D:multistatus', doc.get('multistatus'))
+            resp = ms.get('D:response', ms.get('response'))
+            propstat = resp.get('D:propstat', resp.get('propstat'))
+            if isinstance(propstat, list): propstat = propstat[0]
+            prop = propstat.get('D:prop', propstat.get('prop'))
+            token = prop.get('D:sync-token', prop.get('sync-token'))
+            return token
+        except (AttributeError, KeyError, TypeError):
+            return None
+
+    def sync_collection(self, collection_id: str, sync_token: str = "") -> Tuple[List[Dict], List[str], str]:
+        """
+        Performs a WebDAV sync-collection REPORT (RFC 6578).
+        Returns: (updated_items, deleted_hrefs, new_sync_token)
+        updated_items is a list of dicts: {'href': str, 'etag': str}
+        """
+        url = path.join(self.host, self.username, collection_id)
+        
+        body = f"""<?xml version="1.0" encoding="utf-8" ?>
+<D:sync-collection xmlns:D="DAV:">
+    <D:sync-token>{sync_token}</D:sync-token>
+    <D:sync-level>1</D:sync-level>
+    <D:prop>
+        <D:getetag/>
+    </D:prop>
+</D:sync-collection>"""
+
+        response = requests.request("REPORT", url, data=body, auth=(self.username, self.password))
+        
+        if response.status_code != 207:
+            print(f"Sync failed: {response.status_code}")
+            return [], [], sync_token
+
+        doc = xmltodict.parse(response.content)
+        ms = doc.get('D:multistatus', doc.get('multistatus', {}))
+        
+        new_token = ms.get('D:sync-token', ms.get('sync-token'))
+        
+        updated = []
+        deleted = []
+        
+        responses = ms.get('D:response', ms.get('response', []))
+        if isinstance(responses, dict): responses = [responses]
+        
+        for r in responses:
+            href = r.get('D:href', r.get('href'))
+            status = r.get('D:status', r.get('status'))
+            
+            if status and '404' in status:
+                deleted.append(href)
+            else:
+                propstat = r.get('D:propstat', r.get('propstat', {}))
+                if isinstance(propstat, list): propstat = propstat[0]
+                
+                prop = propstat.get('D:prop', propstat.get('prop', {}))
+                etag = prop.get('D:getetag', prop.get('getetag'))
+                if etag: etag = etag.strip('"')
+                
+                updated.append({'href': href, 'etag': etag})
+                
+        return updated, deleted, new_token
         
     def create_vcard(self, addressbook_id, vcard_obj: VCard):
         """
@@ -514,7 +595,7 @@ if __name__ == "__main__" and False:
     # >Deleting event-d25e58a8-0291-4773-9c31-ef1980ae6acd.ics...
     # >Deleted event-d25e58a8-0291-4773-9c31-ef1980ae6acd.ics
 
-if __name__ == "__main__":
+if __name__ == "__main__" and False:
     import uuid
 
     # Configuration
@@ -728,7 +809,7 @@ if __name__ == "__main__":
         print(f"[FAIL] Expected VTodo, got {type(retrieved_todo)}")
 
     # outputs:
-    
+
     # > --- Setting up Collections ---
     # > Create Collection 'http://vera-webdav-svc.vera.svc.cluster.local:5232/test/addressbook_test' already exists.
     # > Create Collection Failed: 409 - <?xml version='1.0' encoding='utf-8'?>
@@ -783,3 +864,129 @@ if __name__ == "__main__":
     # > Deleted event-b5ace01d-f0f9-4d62-bc65-dabd419252cf.ics
     # > [PASS] Retrieved object is VTodo (High Level Todo).
     # > Deleted todo-1bd1178b-981d-4260-a2e4-8fc332ebd9f2.ics
+
+
+
+if __name__ == "__main__":
+    import uuid
+
+    # Configuration
+    RADICALE_HOST = "http://vera-webdav-svc.vera.svc.cluster.local:5232"
+    USERNAME = "test"
+    PASSWORD = ""  
+    
+    # Init Client
+    aloedav = AloeDAV(RADICALE_HOST, USERNAME, PASSWORD)
+
+    # 1. Setup Collections
+    print("--- Setting up Collections ---")
+    abook_id = "addressbook_test"
+    cal_id = "calendar_test"
+    
+    aloedav.create_addressbook("Test Contacts", "A verified addressbook", abook_id)
+    aloedav.create_calendar("Test Calendar", "A verified calendar", cal_id)
+    print("Collections available:", [c[0] for c in aloedav.list_collections()])
+    print("-" * 30)
+
+    # 2. Test Sync Token Lifecycle (Calendar)
+    print("\n--- Testing Calendar Sync Token Lifecycle ---")
+    
+    # A. Initial Sync (Get Baseline)
+    # Get current token to ignore previous mess
+    current_token = aloedav.get_sync_token(cal_id)
+    print(f"Initial Sync Token: {current_token}")
+    
+    # Run a sync from this token (Should be empty if nothing changed, or catch up)
+    updated, deleted, token_1 = aloedav.sync_collection(cal_id, current_token)
+    print(f"Baseline Sync: {len(updated)} updated, {len(deleted)} deleted. Token: {token_1}")
+
+    # B. Create Item
+    print("\n[Action] Creating Event...")
+    event_uid = f"event-{uuid.uuid4()}"
+    event = VEvent(
+        uid=event_uid,
+        summary="Sync Test Event",
+        dtstart=datetime(2026, 1, 15, 10, 0, 0)
+    )
+    fname = aloedav.create_calendar_object(cal_id, event)
+    
+    # C. Sync (Should see 1 update)
+    print("\n[Action] Syncing...")
+    updated, deleted, token_2 = aloedav.sync_collection(cal_id, token_1)
+    print(f"Sync Result: {len(updated)} updated, {len(deleted)} deleted. Token: {token_2}")
+    
+    found_create = next((item for item in updated if fname in item['href']), None)
+    if found_create:
+        print(f"[PASS] Found created event in sync report: {fname}")
+        etag_for_delete = found_create['etag']
+    else:
+        print(f"[FAIL] Created event {fname} NOT found in sync report.")
+        etag_for_delete = None
+
+    # D. Delete Item
+    if etag_for_delete:
+        print("\n[Action] Deleting Event...")
+        aloedav.delete_object(cal_id, fname, etag=etag_for_delete)
+        
+        # E. Sync (Should see 1 delete)
+        print("\n[Action] Syncing...")
+        updated, deleted, token_3 = aloedav.sync_collection(cal_id, token_2)
+        print(f"Sync Result: {len(updated)} updated, {len(deleted)} deleted. Token: {token_3}")
+        
+        found_delete = next((href for href in deleted if fname in href), None)
+        if found_delete:
+            print(f"[PASS] Found deleted event href in sync report.")
+        else:
+            print(f"[FAIL] Deleted event href NOT found in sync report.")
+
+        # Outputs:
+
+        # > --- Setting up Collections ---
+        # > Create Collection 'http://vera-webdav-svc.vera.svc.cluster.local:5232/test/addressbook_test' already exists.
+        # > Create Collection Failed: 409 - <?xml version='1.0' encoding='utf-8'?>
+        # > <error xmlns="DAV:"><resource-must-be-null /></error>
+        # > Collections available: ['/test/calendar123/', '/test/calendar_test/', '/test/main2/', '/test/contacts2/', '/test/calendar_id/', '/test/addressbook123/', '/test/addressbook_test/', '/test/addressbook_id/', '/test/contacts/']
+        # > ------------------------------
+        # > 
+        # > --- Testing Addressbook High-Level Retrieval ---
+        # > vCard created: 3d1e8fde-cd98-43cf-b11e-7c61f8580b4a.vcf
+        # > Created Contact: 3d1e8fde-cd98-43cf-b11e-7c61f8580b4a.vcf
+        # > Retrieved Object Type: VCard
+        # > Retrieved FN: Deserialization Test
+        # > ETag: 0b05fae658312027aea4ba1c3a33ee736978c93525107851ccef64de1a85030b
+        # > [PASS] VCard deserialized successfully.
+        # > Deleted 3d1e8fde-cd98-43cf-b11e-7c61f8580b4a.vcf
+        # > 
+        # > --- Testing Calendar High-Level Retrieval ---
+        # > Calendar object created: event-cb107266-b3af-4465-93cd-1300e8f824df.ics
+        # > Created Event: event-cb107266-b3af-4465-93cd-1300e8f824df.ics
+        # > Calendar object created: todo-520b16ab-88c6-4173-a73c-4a73c0b4b08b.ics
+        # > Created Todo: todo-520b16ab-88c6-4173-a73c-4a73c0b4b08b.ics
+        # > [PASS] Retrieved object is VEvent (High Level Event).
+        # > Deleted event-cb107266-b3af-4465-93cd-1300e8f824df.ics
+        # > [PASS] Retrieved object is VTodo (High Level Todo).
+        # > Deleted todo-520b16ab-88c6-4173-a73c-4a73c0b4b08b.ics
+        # > --- Setting up Collections ---
+        # > Create Collection 'http://vera-webdav-svc.vera.svc.cluster.local:5232/test/addressbook_test' already exists.
+        # > Create Collection Failed: 409 - <?xml version='1.0' encoding='utf-8'?>
+        # > <error xmlns="DAV:"><resource-must-be-null /></error>
+        # > Collections available: ['/test/calendar123/', '/test/calendar_test/', '/test/main2/', '/test/contacts2/', '/test/calendar_id/', '/test/addressbook123/', '/test/addressbook_test/', '/test/addressbook_id/', '/test/contacts/']
+        # > ------------------------------
+        # > 
+        # > --- Testing Calendar Sync Token Lifecycle ---
+        # > Initial Sync Token: http://radicale.org/ns/sync/b18dfe4c6fbb2b497c842e6180cd6835b8e266e9c4d222b72be7866d05087202
+        # > Baseline Sync: 0 updated, 0 deleted. Token: http://radicale.org/ns/sync/b18dfe4c6fbb2b497c842e6180cd6835b8e266e9c4d222b72be7866d05087202
+        # > 
+        # > [Action] Creating Event...
+        # > Calendar object created: event-77cc1225-b138-4348-a04c-6d38d25967dd.ics
+        # > 
+        # > [Action] Syncing...
+        # > Sync Result: 1 updated, 0 deleted. Token: http://radicale.org/ns/sync/57b4bf733c9ebd992ae3b011b0d82d7d980db9864ab1f69d0e40bf8d995367f8
+        # > [PASS] Found created event in sync report: event-77cc1225-b138-4348-a04c-6d38d25967dd.ics
+        # > 
+        # > [Action] Deleting Event...
+        # > Deleted event-77cc1225-b138-4348-a04c-6d38d25967dd.ics
+        # > 
+        # > [Action] Syncing...
+        # > Sync Result: 0 updated, 1 deleted. Token: http://radicale.org/ns/sync/f1233be045d50c2062eb8e30dea68985a1270573c4d8529660492c4283856dec
+        # > [PASS] Found deleted event href in sync report.
