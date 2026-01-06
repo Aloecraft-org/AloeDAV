@@ -149,7 +149,7 @@ class AloeDAV:
             propstat = r.get('propstat', {})
             if isinstance(propstat, list): propstat = propstat[0]
             
-            card_data = propstat.get('prop', {}).get('C:address-data')
+            card_data = propstat.get('prop', {}).get('CR:address-data')
             if card_data:
                 results.append({'href': r.get('href'), 'data': card_data})
         return results
