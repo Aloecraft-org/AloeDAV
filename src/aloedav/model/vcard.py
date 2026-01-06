@@ -174,16 +174,17 @@ class VCard(BaseModel):
             
         # Phones
         for phone in self.phones:
-            type_str = f";TYPE={phone.type}" if phone.type else ""
+            p_val = phone.type.value if hasattr(phone.type, 'value') else phone.type
+            type_str = f";TYPE={p_val}" if p_val else ""
             pref_str = ";TYPE=PREF" if phone.is_preferred else ""
             lines.append(f"TEL{type_str}{pref_str}:{phone.number}")
 
         # Addresses
         for addr in self.addresses:
-            type_str = f";TYPE={addr.type}" if addr.type else ""
+            a_val = addr.type.value if hasattr(addr.type, 'value') else addr.type
+            type_str = f";TYPE={a_val}" if a_val else ""
             # ADR format: ;;street;city;region;code;country
-            lines.append(f"ADR{type_str}:;;{addr.street or ''};{addr.city or ''};"
-                        f"{addr.state or ''};{addr.postal_code or ''};{addr.country or ''}")
+            lines.append(f"ADR{type_str}:;;{addr.street or ''};{addr.city or ''};")
 
         if self.url:
             lines.append(f"URL:{self.url}")

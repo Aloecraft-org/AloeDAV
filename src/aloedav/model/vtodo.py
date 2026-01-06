@@ -245,8 +245,8 @@ class VTodo(BaseModel):
             lines.append(f"CATEGORIES:{','.join(self.categories)}")
 
         # --- Status & Priority ---
-        lines.append(f"STATUS:{self.status}")
-        lines.append(f"CLASS:{self.classification}")
+        lines.append(f"STATUS:{self.status.value if hasattr(self.status, 'value') else self.status}")
+        lines.append(f"CLASS:{self.classification.value if hasattr(self.classification, 'value') else self.classification}")
         lines.append(f"PRIORITY:{self.priority}")
         lines.append(f"PERCENT-COMPLETE:{self.percent_complete}")
         lines.append(f"SEQUENCE:{self.sequence}")
@@ -269,7 +269,8 @@ class VTodo(BaseModel):
         # --- Recurrence Rule (RRULE) ---
         if self.recurrence_rule:
             r = self.recurrence_rule
-            parts = [f"FREQ={r.frequency}"]
+            freq = r.frequency.value if hasattr(r.frequency, 'value') else r.frequency
+            parts = [f"FREQ={freq}"]
             
             if r.interval > 1:
                 parts.append(f"INTERVAL={r.interval}")

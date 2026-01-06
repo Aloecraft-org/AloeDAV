@@ -241,9 +241,10 @@ class VEvent(BaseModel):
         if self.url:
             lines.append(f"URL:{self.url}")
             
-        lines.append(f"STATUS:{self.status}")
-        lines.append(f"CLASS:{self.classification}")
-        lines.append(f"TRANSP:{self.transparency}")
+        # Ensure Enum values are serialized, not the Enum object repr
+        lines.append(f"STATUS:{self.status.value if hasattr(self.status, 'value') else self.status}")
+        lines.append(f"CLASS:{self.classification.value if hasattr(self.classification, 'value') else self.classification}")
+        lines.append(f"TRANSP:{self.transparency.value if hasattr(self.transparency, 'value') else self.transparency}")
         lines.append(f"SEQUENCE:{self.sequence}")
         lines.append(f"PRIORITY:{self.priority}")
         
@@ -268,7 +269,8 @@ class VEvent(BaseModel):
         # --- Recurrence Rule (RRULE) ---
         if self.recurrence_rule:
             r = self.recurrence_rule
-            parts = [f"FREQ={r.frequency}"]
+            freq = r.frequency.value if hasattr(r.frequency, 'value') else r.frequency
+            parts = [f"FREQ={freq}"]
             
             if r.interval > 1:
                 parts.append(f"INTERVAL={r.interval}")

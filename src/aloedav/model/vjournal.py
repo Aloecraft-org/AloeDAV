@@ -254,8 +254,8 @@ class VJournal(BaseModel):
             lines.append(f"CATEGORIES:{','.join(unique_cats)}")
 
         # --- Status & Classification ---
-        lines.append(f"STATUS:{self.status}")
-        lines.append(f"CLASS:{self.classification}")
+        lines.append(f"STATUS:{self.status.value if hasattr(self.status, 'value') else self.status}")
+        lines.append(f"CLASS:{self.classification.value if hasattr(self.classification, 'value') else self.classification}")
         lines.append(f"SEQUENCE:{self.sequence}")
 
         # --- Organizer ---
@@ -279,7 +279,8 @@ class VJournal(BaseModel):
         # --- Recurrence Rule (RRULE) ---
         if self.recurrence_rule:
             r = self.recurrence_rule
-            parts = [f"FREQ={r.frequency}"]
+            freq = r.frequency.value if hasattr(r.frequency, 'value') else r.frequency
+            parts = [f"FREQ={freq}"]
             
             if r.interval > 1:
                 parts.append(f"INTERVAL={r.interval}")
