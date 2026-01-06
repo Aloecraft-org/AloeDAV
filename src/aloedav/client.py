@@ -2,6 +2,7 @@ from os import path
 import xmltodict
 import requests
 from datetime import datetime
+from typing import Tuple, Union
 from aloedav.model.calendar import CalendarComponents
 from aloedav.model.vcard    import VCard, Address, PhoneType, Phone, AddressType
 from aloedav.model.vevent   import VEvent, Attendee, Alarm, RecurrenceRule, RecurrenceFrequency, Transparency, EventClass, EventStatus
@@ -225,6 +226,35 @@ class AloeDAV:
             print(f"Failed to retrieve contact: {response.status_code}")
             return None, None
 
+    def get_vcard(self, addressbook_id: str, filename: str) -> Tuple[Union[VCard, None], Union[str, None]]:
+        """
+        High-level getter. Retrieves and deserializes a VCard.
+        Returns (VCard_Object, ETag).
+        """
+        content, etag = self.get_addressbook_object(addressbook_id, filename)
+        if not content:
+            return None, None
+        return VCard.from_vcard_string(content), etag
+
+    def get_calendar_model(self, calendar_id: str, filename: str) -> Tuple[Union[VEvent, VTodo, VJournal, None], Union[str, None]]:
+        """
+        High-level getter. Retrieves and deserializes a VEvent, VTodo, or VJournal.
+        Returns (Model_Object, ETag).
+        """
+        content, etag = self.get_calendar_object(calendar_id, filename)
+        if not content:
+            return None, None
+        
+        if "BEGIN:VEVENT" in content:
+            return VEvent.from_vcalendar_string(content), etag
+        elif "BEGIN:VTODO" in content:
+            return VTodo.from_vcalendar_string(content), etag
+        elif "BEGIN:VJOURNAL" in content:
+            return VJournal.from_vcalendar_string(content), etag
+        else:
+            print(f"Warning: Unknown component type in {filename}")
+            return None, etag
+        
     def create_vcard(self, addressbook_id, vcard_obj: VCard):
         """
         Creates a new vCard in the specified addressbook using the Pydantic model.
@@ -335,6 +365,154 @@ class AloeDAV:
         else:
             print(f"Failed to update object: {response.status_code} - {response.text}")
             return False
+
+if __name__ == "__main__" and False:
+    import uuid
+
+    # Configuration
+    RADICALE_HOST = "http://vera-webdav-svc.vera.svc.cluster.local:5232"
+    USERNAME = "test"
+    PASSWORD = ""  # If your server requires a password, add it here.
+    
+    # Init Client
+    aloedav = AloeDAV(RADICALE_HOST, USERNAME, PASSWORD)
+
+    # 1. Setup Collections
+    print("--- Setting up Collections ---")
+    abook_id = "addressbook_test"
+    cal_id = "calendar_test"
+    
+    aloedav.create_addressbook("Test Contacts", "A verified addressbook", abook_id)
+    aloedav.create_calendar("Test Calendar", "A verified calendar", cal_id)
+    
+    print("Collections available:", [c[0] for c in aloedav.list_collections()])
+    print("-" * 30)
+
+    # 2. Test Addressbook Lifecycle
+    print("\n--- Testing Addressbook Lifecycle ---")
+    
+    # Create
+    contact_uid = str(uuid.uuid4())
+    contact = VCard(
+        uid=contact_uid,
+        fn="Delete Me",
+        given_name="Delete",
+        family_name="Me",
+        emails=["delete.me@example.com"]
+    )
+    fname = aloedav.create_vcard(abook_id, contact)
+    print(f"Created Contact: {fname}")
+
+    # List & Verify ETag
+    entries = aloedav.list_addressbook_entries(abook_id)
+    target_entry = next((e for e in entries if fname in e['href']), None)
+    
+    if target_entry:
+        print(f"Found in list. Href: {target_entry['href']}, ETag: {target_entry.get('etag')}")
+        
+        # Get specific object
+        clean_name = aloedav._extract_name_from_href(target_entry['href'])
+        content, etag = aloedav.get_addressbook_object(abook_id, clean_name)
+        print(f"Fetched directly. ETag matches: {etag == target_entry.get('etag')}")
+
+        # Update
+        print(f"Updating {clean_name} (checking ETag logic)...")
+        contact.given_name = "UpdatedName"
+        if aloedav.update_vcard(abook_id, clean_name, contact, etag=etag):
+            print("Update successful.")
+            # Refresh ETag after update for deletion
+            content, etag = aloedav.get_addressbook_object(abook_id, clean_name)
+        else:
+            print("Update failed (Expected if ETag quoting is missing).")
+
+        # Delete
+        print(f"Deleting {clean_name} with ETag {etag}...")
+        success = aloedav.delete_object(abook_id, clean_name, etag=etag)
+        if success: 
+            print("Deletion successful.")
+        else:
+            print("Deletion failed.")
+    else:
+        print("Error: Created contact not found in list.")
+
+
+    # 3. Test Calendar Lifecycle
+    print("\n--- Testing Calendar Lifecycle ---")
+    
+    # Create Event
+    event_uid = f"event-{uuid.uuid4()}"
+    event = VEvent(
+        uid=event_uid,
+        summary="Temporary Event",
+        dtstart=datetime(2026, 1, 10, 12, 0, 0),
+        dtend=datetime(2026, 1, 10, 13, 0, 0)
+    )
+    fname = aloedav.create_calendar_object(cal_id, event)
+    print(f"Created Event: {fname}")
+
+    # List with Time Filter
+    print("Listing events between 2026-01-09 and 2026-01-11...")
+    events = aloedav.list_calendar_objects(
+        cal_id, 
+        component_type="VEVENT", 
+        start=datetime(2026, 1, 9), 
+        end=datetime(2026, 1, 11)
+    )
+    
+    target_event = next((e for e in events if fname in e['href']), None)
+    
+    if target_event:
+        print(f"Found event. ETag: {target_event.get('etag')}")
+        
+        # Get
+        clean_name = aloedav._extract_name_from_href(target_event['href'])
+        content, etag = aloedav.get_calendar_object(cal_id, clean_name)
+        
+        # Update
+        print(f"Updating {clean_name} (checking ETag logic)...")
+        event.summary = "Updated Summary"
+        if aloedav.update_calendar_object(cal_id, clean_name, event, etag=etag):
+            print("Update successful.")
+            content, etag = aloedav.get_calendar_object(cal_id, clean_name)
+        else:
+            print("Update failed (Expected if ETag quoting is missing).")
+        
+        # Delete
+        print(f"Deleting {clean_name}...")
+        aloedav.delete_object(cal_id, clean_name, etag=etag)
+    else:
+        print("Error: Created event not found in time-filtered list.")
+
+    # outputs:
+    # >--- Setting up Collections ---
+    # >Create Collection 'http://vera-webdav-svc.vera.svc.cluster.local:5232/test/addressbook_test' already exists.
+    # >Create Collection Failed: 409 - <?xml version='1.0' encoding='utf-8'?>
+    # ><error xmlns="DAV:"><resource-must-be-null /></error>
+    # >Collections available: ['/test/calendar123/', '/test/calendar_test/', '/test/main2/', '/test/contacts2/', '/test/calendar_id/', '/test/addressbook123/', '/test/addressbook_test/', '/test/addressbook_id/', '/test/contacts/']
+    # >------------------------------
+    # >
+    # >--- Testing Addressbook Lifecycle ---
+    # >vCard created: e8fd2152-aa0a-4dc6-8a54-9097d1a50c5f.vcf
+    # >Created Contact: e8fd2152-aa0a-4dc6-8a54-9097d1a50c5f.vcf
+    # >Found in list. Href: /test/addressbook_test/e8fd2152-aa0a-4dc6-8a54-9097d1a50c5f.vcf, ETag: b34cb7b5331f2cfa1601719d84d597ef4971fd68b9f9b9bfb30caaef481f7cd5
+    # >Fetched directly. ETag matches: True
+    # >Updating e8fd2152-aa0a-4dc6-8a54-9097d1a50c5f.vcf (checking ETag logic)...
+    # >vCard updated: e8fd2152-aa0a-4dc6-8a54-9097d1a50c5f.vcf
+    # >Update successful.
+    # >Deleting e8fd2152-aa0a-4dc6-8a54-9097d1a50c5f.vcf with ETag 8fb77052daf1b9173e775826097807733b9d0fdde37c610cabf62ea18cde00cd...
+    # >Deleted e8fd2152-aa0a-4dc6-8a54-9097d1a50c5f.vcf
+    # >Deletion successful.
+    # >
+    # >--- Testing Calendar Lifecycle ---
+    # >Calendar object created: event-d25e58a8-0291-4773-9c31-ef1980ae6acd.ics
+    # >Created Event: event-d25e58a8-0291-4773-9c31-ef1980ae6acd.ics
+    # >Listing events between 2026-01-09 and 2026-01-11...
+    # >Found event. ETag: a8181286c8949c13c76077c6d5d123997fbcd85002b0832c5921eea289906494
+    # >Updating event-d25e58a8-0291-4773-9c31-ef1980ae6acd.ics (checking ETag logic)...
+    # >Calendar object updated: event-d25e58a8-0291-4773-9c31-ef1980ae6acd.ics
+    # >Update successful.
+    # >Deleting event-d25e58a8-0291-4773-9c31-ef1980ae6acd.ics...
+    # >Deleted event-d25e58a8-0291-4773-9c31-ef1980ae6acd.ics
 
 if __name__ == "__main__":
     import uuid
@@ -452,3 +630,156 @@ if __name__ == "__main__":
         aloedav.delete_object(cal_id, clean_name, etag=etag)
     else:
         print("Error: Created event not found in time-filtered list.")
+
+if __name__ == "__main__":
+    import uuid
+
+    # Configuration
+    RADICALE_HOST = "http://vera-webdav-svc.vera.svc.cluster.local:5232"
+    USERNAME = "test"
+    PASSWORD = ""  
+    
+    # Init Client
+    aloedav = AloeDAV(RADICALE_HOST, USERNAME, PASSWORD)
+
+    # 1. Setup Collections
+    print("--- Setting up Collections ---")
+    abook_id = "addressbook_test"
+    cal_id = "calendar_test"
+    
+    aloedav.create_addressbook("Test Contacts", "A verified addressbook", abook_id)
+    aloedav.create_calendar("Test Calendar", "A verified calendar", cal_id)
+    print("Collections available:", [c[0] for c in aloedav.list_collections()])
+    print("-" * 30)
+
+    # 2. Test Addressbook (Object Retrieval)
+    print("\n--- Testing Addressbook High-Level Retrieval ---")
+    
+    # Create
+    contact_uid = str(uuid.uuid4())
+    contact = VCard(
+        uid=contact_uid,
+        fn="Deserialization Test",
+        given_name="Deserialization",
+        family_name="Test",
+        emails=["test@example.com"]
+    )
+    fname = aloedav.create_vcard(abook_id, contact)
+    print(f"Created Contact: {fname}")
+
+    # Retrieve using High-Level Getter
+    retrieved_contact, etag = aloedav.get_vcard(abook_id, fname)
+    
+    if retrieved_contact:
+        print(f"Retrieved Object Type: {type(retrieved_contact).__name__}")
+        print(f"Retrieved FN: {retrieved_contact.full_name}")
+        print(f"ETag: {etag}")
+        
+        if retrieved_contact.full_name == "Deserialization Test":
+            print("[PASS] VCard deserialized successfully.")
+        else:
+            print("[FAIL] VCard data mismatch.")
+            
+        # Clean up
+        aloedav.delete_object(abook_id, fname, etag=etag)
+    else:
+        print("[FAIL] Could not retrieve VCard.")
+
+
+    # 3. Test Calendar (Object Retrieval)
+    print("\n--- Testing Calendar High-Level Retrieval ---")
+    
+    # Create Event
+    event_uid = f"event-{uuid.uuid4()}"
+    event = VEvent(
+        uid=event_uid,
+        summary="High Level Event",
+        dtstart=datetime(2026, 1, 10, 12, 0, 0),
+        dtend=datetime(2026, 1, 10, 13, 0, 0)
+    )
+    fname_evt = aloedav.create_calendar_object(cal_id, event)
+    print(f"Created Event: {fname_evt}")
+
+    # Create Todo
+    todo_uid = f"todo-{uuid.uuid4()}"
+    todo = VTodo(
+        uid=todo_uid,
+        summary="High Level Todo",
+        dtstart=datetime(2026, 1, 12, 9, 0, 0),
+        status=TodoStatus.NEEDS_ACTION
+    )
+    fname_todo = aloedav.create_calendar_object(cal_id, todo)
+    print(f"Created Todo: {fname_todo}")
+
+    # Retrieve Event
+    retrieved_evt, etag_evt = aloedav.get_calendar_model(cal_id, fname_evt)
+    if isinstance(retrieved_evt, VEvent):
+        print(f"[PASS] Retrieved object is VEvent ({retrieved_evt.summary}).")
+        aloedav.delete_object(cal_id, fname_evt, etag=etag_evt)
+    else:
+        print(f"[FAIL] Expected VEvent, got {type(retrieved_evt)}")
+
+    # Retrieve Todo
+    retrieved_todo, etag_todo = aloedav.get_calendar_model(cal_id, fname_todo)
+    if isinstance(retrieved_todo, VTodo):
+        print(f"[PASS] Retrieved object is VTodo ({retrieved_todo.summary}).")
+        aloedav.delete_object(cal_id, fname_todo, etag=etag_todo)
+    else:
+        print(f"[FAIL] Expected VTodo, got {type(retrieved_todo)}")
+
+    # outputs:
+    
+    # > --- Setting up Collections ---
+    # > Create Collection 'http://vera-webdav-svc.vera.svc.cluster.local:5232/test/addressbook_test' already exists.
+    # > Create Collection Failed: 409 - <?xml version='1.0' encoding='utf-8'?>
+    # > <error xmlns="DAV:"><resource-must-be-null /></error>
+    # > Collections available: ['/test/calendar123/', '/test/calendar_test/', '/test/main2/', '/test/contacts2/', '/test/calendar_id/', '/test/addressbook123/', '/test/addressbook_test/', '/test/addressbook_id/', '/test/contacts/']
+    # > ------------------------------
+    # > 
+    # > --- Testing Addressbook Lifecycle ---
+    # > vCard created: 7eebccb1-978e-4060-85b6-8abdec1f7fac.vcf
+    # > Created Contact: 7eebccb1-978e-4060-85b6-8abdec1f7fac.vcf
+    # > Found in list. Href: /test/addressbook_test/7eebccb1-978e-4060-85b6-8abdec1f7fac.vcf, ETag: 43ab5175234c1ab16e637fe1ebd30785f5e232e50fc7231e2424152cc7cf71af
+    # > Fetched directly. ETag matches: True
+    # > Updating 7eebccb1-978e-4060-85b6-8abdec1f7fac.vcf (checking ETag logic)...
+    # > vCard updated: 7eebccb1-978e-4060-85b6-8abdec1f7fac.vcf
+    # > Update successful.
+    # > Deleting 7eebccb1-978e-4060-85b6-8abdec1f7fac.vcf with ETag bb6a4d4f5dfd1ee4d5b2aa2cdc62e21ec2c1fa890634ea5a1ab07af405c9efba...
+    # > Deleted 7eebccb1-978e-4060-85b6-8abdec1f7fac.vcf
+    # > Deletion successful.
+    # > 
+    # > --- Testing Calendar Lifecycle ---
+    # > Calendar object created: event-d1db569f-3b9e-4651-9aa8-c3e9b89aa5fe.ics
+    # > Created Event: event-d1db569f-3b9e-4651-9aa8-c3e9b89aa5fe.ics
+    # > Listing events between 2026-01-09 and 2026-01-11...
+    # > Found event. ETag: 3dac627d1fdcd9544684a11367e287d98aebbe79207cb13e49dae899da488025
+    # > Updating event-d1db569f-3b9e-4651-9aa8-c3e9b89aa5fe.ics (checking ETag logic)...
+    # > Calendar object updated: event-d1db569f-3b9e-4651-9aa8-c3e9b89aa5fe.ics
+    # > Update successful.
+    # > Deleting event-d1db569f-3b9e-4651-9aa8-c3e9b89aa5fe.ics...
+    # > Deleted event-d1db569f-3b9e-4651-9aa8-c3e9b89aa5fe.ics
+    # > --- Setting up Collections ---
+    # > Create Collection 'http://vera-webdav-svc.vera.svc.cluster.local:5232/test/addressbook_test' already exists.
+    # > Create Collection Failed: 409 - <?xml version='1.0' encoding='utf-8'?>
+    # > <error xmlns="DAV:"><resource-must-be-null /></error>
+    # > Collections available: ['/test/calendar123/', '/test/calendar_test/', '/test/main2/', '/test/contacts2/', '/test/calendar_id/', '/test/addressbook123/', '/test/addressbook_test/', '/test/addressbook_id/', '/test/contacts/']
+    # > ------------------------------
+    # > 
+    # > --- Testing Addressbook High-Level Retrieval ---
+    # > vCard created: 1b5abcdb-cbbf-414f-9c33-838b7f4306bf.vcf
+    # > Created Contact: 1b5abcdb-cbbf-414f-9c33-838b7f4306bf.vcf
+    # > Retrieved Object Type: VCard
+    # > Retrieved FN: Deserialization Test
+    # > ETag: 46457b4dea7f73b2deb66c7288b286870154acb04a0b56e9be5b9ed6e3ecee7a
+    # > [PASS] VCard deserialized successfully.
+    # > Deleted 1b5abcdb-cbbf-414f-9c33-838b7f4306bf.vcf
+    # > 
+    # > --- Testing Calendar High-Level Retrieval ---
+    # > Calendar object created: event-b5ace01d-f0f9-4d62-bc65-dabd419252cf.ics
+    # > Created Event: event-b5ace01d-f0f9-4d62-bc65-dabd419252cf.ics
+    # > Calendar object created: todo-1bd1178b-981d-4260-a2e4-8fc332ebd9f2.ics
+    # > Created Todo: todo-1bd1178b-981d-4260-a2e4-8fc332ebd9f2.ics
+    # > [PASS] Retrieved object is VEvent (High Level Event).
+    # > Deleted event-b5ace01d-f0f9-4d62-bc65-dabd419252cf.ics
+    # > [PASS] Retrieved object is VTodo (High Level Todo).
+    # > Deleted todo-1bd1178b-981d-4260-a2e4-8fc332ebd9f2.ics
