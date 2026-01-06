@@ -105,7 +105,7 @@ class VCard(BaseModel):
             lines.append(f"NOTE:{self.notes}")
 
         if self.categories:
-            lines.append(f"CATEGORIES:{','.join([self.categories])}")
+            lines.append(f"CATEGORIES:{','.join(self.categories)}")
             
         # Ensure UID exists
         if not self.uid:
