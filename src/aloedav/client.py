@@ -349,6 +349,52 @@ class AloeDAV:
                 
         return updated, deleted, new_token
         
+    def set_dead_property(self, collection_id, filename, prop_name, value, namespace="http://aloecraft.org/ns/"):
+        """
+        Sets a 'dead' property on a resource using PROPPATCH.
+        Used for custom metadata that doesn't belong in the file content.
+        """
+        url = path.join(self.host, self.username, collection_id, filename)
+        body = f"""<?xml version="1.0" encoding="utf-8" ?>
+<D:propertyupdate xmlns:D="DAV:" xmlns:A="{namespace}">
+  <D:set>
+    <D:prop>
+      <A:{prop_name}>{value}</A:{prop_name}>
+    </D:prop>
+  </D:set>
+</D:propertyupdate>"""
+        response = requests.request("PROPPATCH", url, data=body, auth=(self.username, self.password))
+        if response.status_code not in [200, 207]:
+             raise WebDAVError(f"Failed to set property: {response.status_code}", response.status_code, response.text)
+        return True
+
+    def get_dead_property(self, collection_id, filename, prop_name, namespace="http://aloecraft.org/ns/"):
+        """
+        Retrieves a 'dead' property from a resource using PROPFIND.
+        """
+        url = path.join(self.host, self.username, collection_id, filename)
+        body = f"""<?xml version="1.0" encoding="utf-8" ?>
+<D:propfind xmlns:D="DAV:" xmlns:A="{namespace}">
+  <D:prop><A:{prop_name}/></D:prop>
+</D:propfind>"""
+        response = requests.request("PROPFIND", url, data=body, headers={"Depth": "0"}, auth=(self.username, self.password))
+        if response.status_code != 207:
+            return None
+        
+        doc = xmltodict.parse(response.content)
+        try:
+            ms = doc.get('D:multistatus', doc.get('multistatus', {}))
+            resp = ms.get('D:response', ms.get('response', {}))
+            propstat = resp.get('D:propstat', resp.get('propstat', {}))
+            if isinstance(propstat, list): propstat = propstat[0]
+            prop = propstat.get('D:prop', propstat.get('prop', {}))
+            for k, v in prop.items():
+                if k.endswith(f":{prop_name}") or k == prop_name:
+                    return v
+            return None
+        except (AttributeError, KeyError):
+            return None
+
     def create_vcard(self, addressbook_id, vcard_obj: VCard):
         """
         Creates a new vCard in the specified addressbook using the Pydantic model.
@@ -1068,3 +1114,61 @@ if __name__ == "__main__":
         # > [Action] Syncing...
         # > Sync Result: 0 updated, 1 deleted. Token: http://radicale.org/ns/sync/f1233be045d50c2062eb8e30dea68985a1270573c4d8529660492c4283856dec
         # > [PASS] Found deleted event href in sync report.
+
+
+if __name__ == "__main__":
+    import uuid
+    from aloedav.model.vcard import VCard
+
+    # Configuration
+    RADICALE_HOST = "http://vera-webdav-svc.vera.svc.cluster.local:5232"
+    USERNAME = "test"
+    PASSWORD = ""  
+    
+    aloedav = AloeDAV(RADICALE_HOST, USERNAME, PASSWORD)
+    abook_id = "addressbook_test"
+
+    print("--- Testing Property Persistence ---")
+    
+    # 1. Setup VCard with an Extended Attribute (Internal X-Header)
+    contact_uid = str(uuid.uuid4())
+    contact = VCard(
+        fn="Metadata Tester",
+        extended_attributes={
+            "X-VERA-EMOTION": "Happy",
+            "X-VERA-IMPORTANCE": "High"
+        }
+    )
+    
+    fname = aloedav.create_vcard(abook_id, contact)
+    print(f"[Action] Created Contact: {fname}")
+
+    # 2. Set a Dead Property (External WebDAV XML metadata)
+    # This is metadata the WebDAV server tracks that IS NOT inside the .vcf file.
+    print("[Action] Setting Dead Property 'mirrored-to-cloud'...")
+    aloedav.set_dead_property(abook_id, fname, "mirrored-to-cloud", "true")
+
+    # 3. Retrieve Fresh State
+    print("\n--- Retrieving Fresh State from Server ---")
+    retrieved_vcard, etag = aloedav.get_vcard(abook_id, fname)
+    dead_prop_val = aloedav.get_dead_property(abook_id, fname, "mirrored-to-cloud")
+
+    # 4. Assertions
+    print(f"Retrieved ETag: {etag}")
+    
+    # Verify Internal Extended Attributes
+    if retrieved_vcard.extended_attributes.get("X-VERA-EMOTION") == "Happy":
+        print("[PASS] Extended Attribute (X-Header) persisted.")
+    else:
+        print(f"[FAIL] Extended Attribute missing. Found: {retrieved_vcard.extended_attributes}")
+
+    # Verify External Dead Properties
+    if dead_prop_val == "true":
+        print("[PASS] Dead Property (WebDAV Metadata) persisted.")
+    else:
+        print(f"[FAIL] Dead Property missing. Found: {dead_prop_val}")
+
+    # 5. Cleanup
+    print("\n[Action] Cleaning up...")
+    aloedav.delete_object(abook_id, fname, etag=etag)
+    print("Test Complete.")

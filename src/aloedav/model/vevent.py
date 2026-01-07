@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, EmailStr
-from typing import Optional, List
+from typing import Optional
 from datetime import datetime
 from aloedav.model import ModelUtil
 from aloedav.model.m00_constant import EventStatus, EventClass, Transparency
@@ -9,6 +9,7 @@ from aloedav.model.m01_base import Alarm, Attendee, RecurrenceRule
 class VEvent(BaseModel):
     # Required fields
     uid: Optional[str] = Field(default=None, description="Unique identifier")
+    extended_attributes: dict[str, str] = Field(default_factory=dict)
     summary: str = Field(..., description="Event title")
     dtstart: datetime = Field(..., description="Event start time")
     dtstamp: Optional[datetime] = Field(default_factory=datetime.utcnow, description="Creation timestamp")
@@ -35,12 +36,12 @@ class VEvent(BaseModel):
     recurrence_id: Optional[datetime] = None
     
     # Attendees and notifications
-    attendees: Optional[List[Attendee]] = []
-    alarms: Optional[List[Alarm]] = []
+    attendees: Optional[list[Attendee]] = []
+    alarms: Optional[list[Alarm]] = []
     
     # Metadata
     url: Optional[str] = None
-    categories: Optional[List[str]] = []
+    categories: Optional[list[str]] = []
     comments: Optional[str] = None
     
     # Version
@@ -112,8 +113,12 @@ class VEvent(BaseModel):
                 continue
 
             # Parsing properties based on context
+
             if current_context == "VEVENT":
-                if key == "UID": data["uid"] = value
+                if key.startswith("X-"):
+                        if "extended_attributes" not in data: data["extended_attributes"] = {}
+                        data["extended_attributes"][key] = value
+                elif key == "UID": data["uid"] = value
                 elif key == "SUMMARY": data["summary"] = value
                 elif key == "DTSTART": data["dtstart"] = parse_dt(value)
                 elif key == "DTSTAMP": data["dtstamp"] = parse_dt(value)
@@ -210,6 +215,9 @@ class VEvent(BaseModel):
         
         if self.categories:
             lines.append(f"CATEGORIES:{','.join(self.categories)}")
+            
+        for k, v in self.extended_attributes.items():
+            lines.append(f"{k}:{v}")            
 
         # --- Organizer ---
         if self.organizer_email:

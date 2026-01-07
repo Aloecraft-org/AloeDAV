@@ -2,7 +2,7 @@
 
 import uuid
 from pydantic import BaseModel, Field, HttpUrl
-from typing import Optional, List
+from typing import Optional
 from aloedav.model.m00_constant import PhoneType, AddressType
 from aloedav.model.m01_base import Address, Phone
 from aloedav.model import ModelUtil
@@ -10,13 +10,14 @@ from aloedav.model import ModelUtil
 class VCard(BaseModel):
     # Required fields
     full_name: str = Field(..., alias="fn")
+    extended_attributes: Optional[dict[str, str]] = Field(default_factory=dict)
     given_name: Optional[str] = None
     family_name: Optional[str] = None
 
     # Contact information
-    emails: Optional[List[str]] = []
-    phones: Optional[List[Phone]] = []
-    addresses: Optional[List[Address]] = []
+    emails: Optional[list[str]] = []
+    phones: Optional[list[Phone]] = []
+    addresses: Optional[list[Address]] = []
     
     # Optional fields
     categories: Optional[list[str]] = None
@@ -114,6 +115,9 @@ class VCard(BaseModel):
                 data["uid"] = value
             elif key == "CATEGORIES":
                 data["categories"].extend(value.split(","))
+            elif key.startswith("X-"):
+                if "extended_attributes" not in data: data["extended_attributes"] = {}
+                data["extended_attributes"][key] = value
 
         if not data["fn"]: data["fn"] = "Unknown"
         
@@ -165,7 +169,10 @@ class VCard(BaseModel):
 
         if self.categories:
             lines.append(f"CATEGORIES:{','.join(self.categories)}")
-            
+        
+        for k, v in self.extended_attributes.items():
+            lines.append(f"{k}:{v}")
+
         # Ensure UID exists
         if not self.uid:
             self.uid = str(uuid.uuid4())

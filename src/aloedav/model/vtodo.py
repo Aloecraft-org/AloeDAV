@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, EmailStr
-from typing import Optional, List
+from typing import Optional
 from datetime import datetime
 from enum import StrEnum
 from aloedav.model import ModelUtil
@@ -9,6 +9,7 @@ from aloedav.model.m01_base import RecurrenceRule, Alarm, Attendee
 class VTodo(BaseModel):
     # Required fields
     uid: str = Field(..., description="Unique identifier")
+    extended_attributes: dict[str, str] = Field(default_factory=dict)    
     summary: str = Field(..., description="Todo title/summary")
     dtstamp: Optional[datetime] = Field(default_factory=datetime.utcnow, description="Creation timestamp")
     
@@ -20,7 +21,7 @@ class VTodo(BaseModel):
     
     # Task details
     description: Optional[str] = None
-    categories: Optional[List[str]] = []
+    categories: Optional[list[str]] = []
     comments: Optional[str] = None
     
     # Task properties
@@ -33,14 +34,14 @@ class VTodo(BaseModel):
     # Organizer and attendees
     organizer_name: Optional[str] = None
     organizer_email: Optional[EmailStr] = None
-    attendees: Optional[List[Attendee]] = []
+    attendees: Optional[list[Attendee]] = []
     
     # Recurrence
     recurrence_rule: Optional[RecurrenceRule] = None
     recurrence_id: Optional[datetime] = None
     
     # Notifications
-    alarms: Optional[List[Alarm]] = []
+    alarms: Optional[list[Alarm]] = []
     
     # Metadata
     url: Optional[str] = None
@@ -114,7 +115,10 @@ class VTodo(BaseModel):
 
             # Parsing properties based on context
             if current_context == "VTODO":
-                if key == "UID": data["uid"] = value
+                if key.startswith("X-"):
+                    if "extended_attributes" not in data: data["extended_attributes"] = {}
+                    data["extended_attributes"][key] = value
+                elif key == "UID": data["uid"] = value
                 elif key == "SUMMARY": data["summary"] = value
                 elif key == "DTSTART": data["dtstart"] = parse_dt(value)
                 elif key == "DTSTAMP": data["dtstamp"] = parse_dt(value)
@@ -208,6 +212,9 @@ class VTodo(BaseModel):
             lines.append(f"URL:{self.url}")
         if self.categories:
             lines.append(f"CATEGORIES:{','.join(self.categories)}")
+        
+        for k, v in self.extended_attributes.items():
+            lines.append(f"{k}:{v}")
 
         # --- Status & Priority ---
         lines.append(f"STATUS:{self.status.value if hasattr(self.status, 'value') else self.status}")

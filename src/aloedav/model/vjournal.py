@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, EmailStr
-from typing import Optional, List
+from typing import Optional
 from datetime import datetime
 from aloedav.model import ModelUtil
 from aloedav.model.m00_constant import JournalClass, JournalStatus
@@ -8,6 +8,7 @@ from aloedav.model.m01_base import RecurrenceRule, Attachment, Alarm
 class VJournal(BaseModel):
     # Required fields
     uid: str = Field(..., description="Unique identifier")
+    extended_attributes: dict[str, str] = Field(default_factory=dict)
     dtstamp: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
     
     # Journal content
@@ -27,11 +28,11 @@ class VJournal(BaseModel):
     organizer_email: Optional[EmailStr] = None
     
     # Organization
-    categories: List[str] = []
-    tags: List[str] = []
+    categories: list[str] = []
+    tags: list[str] = []
     
     # Related content
-    attachments: List[Attachment] = []
+    attachments: list[Attachment] = []
     related_to: Optional[str] = None
     url: Optional[str] = None
     
@@ -40,7 +41,7 @@ class VJournal(BaseModel):
     recurrence_id: Optional[datetime] = None
     
     # Notifications
-    alarms: List[Alarm] = []
+    alarms: list[Alarm] = []
     
     # Metadata
     version: str = "2.0"
@@ -110,7 +111,10 @@ class VJournal(BaseModel):
 
             # Context Parsing
             if current_context == "VJOURNAL":
-                if key == "UID": data["uid"] = value
+                if key.startswith("X-"):
+                    if "extended_attributes" not in data: data["extended_attributes"] = {}
+                    data["extended_attributes"][key] = value
+                elif key == "UID": data["uid"] = value
                 elif key == "DTSTAMP": data["dtstamp"] = parse_dt(value)
                 elif key == "SUMMARY": data["summary"] = value
                 elif key == "DESCRIPTION": 
@@ -212,6 +216,9 @@ class VJournal(BaseModel):
             # Remove duplicates if any
             unique_cats = list(set(all_categories))
             lines.append(f"CATEGORIES:{','.join(unique_cats)}")
+
+        for k, v in self.extended_attributes.items():
+            lines.append(f"{k}:{v}")
 
         # --- Status & Classification ---
         lines.append(f"STATUS:{self.status.value if hasattr(self.status, 'value') else self.status}")
