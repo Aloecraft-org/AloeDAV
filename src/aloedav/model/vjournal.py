@@ -1,50 +1,9 @@
 from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, List
 from datetime import datetime
-from enum import Enum
-from aloedav.model.utils import unfold_lines
-
-class JournalStatus(str, Enum):
-    DRAFT = "DRAFT"
-    FINAL = "FINAL"
-    CANCELLED = "CANCELLED"
-
-
-class JournalClass(str, Enum):
-    PUBLIC = "PUBLIC"
-    PRIVATE = "PRIVATE"
-    CONFIDENTIAL = "CONFIDENTIAL"
-
-
-class RecurrenceFrequency(str, Enum):
-    DAILY = "DAILY"
-    WEEKLY = "WEEKLY"
-    MONTHLY = "MONTHLY"
-    YEARLY = "YEARLY"
-
-
-class RecurrenceRule(BaseModel):
-    frequency: RecurrenceFrequency
-    interval: int = 1
-    count: Optional[int] = None
-    until: Optional[datetime] = None
-    by_month_day: Optional[List[int]] = None
-    by_month: Optional[List[int]] = None
-    by_day: Optional[List[str]] = None
-
-
-class Attachment(BaseModel):
-    filename: str
-    mime_type: str
-    data: Optional[str] = None
-    url: Optional[str] = None
-
-
-class Alarm(BaseModel):
-    action: str = "DISPLAY"
-    trigger_minutes: int = Field(0, description="Minutes before journal date")
-    description: Optional[str] = None
-
+from aloedav.model import ModelUtil
+from aloedav.model.m00_constant import JournalClass, JournalStatus
+from aloedav.model.m01_base import RecurrenceRule, Attachment, Alarm
 
 class VJournal(BaseModel):
     # Required fields
@@ -89,9 +48,10 @@ class VJournal(BaseModel):
     
     class Config:
         use_enum_values = True
+
     @classmethod
     def from_vcalendar_string(cls, ics_string: str) -> "VJournal":
-        lines = unfold_lines(ics_string)
+        lines = ModelUtil.unfold_lines(ics_string)
         data = {
             "alarms": [],
             "categories": [],

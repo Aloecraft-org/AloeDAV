@@ -1,57 +1,17 @@
 from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, List
 from datetime import datetime
-from enum import Enum
-from aloedav.model.utils import unfold_lines
+from aloedav.model import ModelUtil
+from aloedav.model.m00_constant import EventStatus, EventClass, Transparency
+from aloedav.model.m01_base import Alarm, Attendee, RecurrenceRule
 
-class EventStatus(str, Enum):
-    TENTATIVE = "TENTATIVE"
-    CONFIRMED = "CONFIRMED"
-    CANCELLED = "CANCELLED"
-
-class EventClass(str, Enum):
-    PUBLIC = "PUBLIC"
-    PRIVATE = "PRIVATE"
-    CONFIDENTIAL = "CONFIDENTIAL"
-
-class Transparency(str, Enum):
-    OPAQUE = "OPAQUE"  # Busy
-    TRANSPARENT = "TRANSPARENT"  # Free
-
-class RecurrenceFrequency(str, Enum):
-    DAILY = "DAILY"
-    WEEKLY = "WEEKLY"
-    MONTHLY = "MONTHLY"
-    YEARLY = "YEARLY"
-
-class RecurrenceRule(BaseModel):
-    frequency: RecurrenceFrequency
-    interval: int = 1
-    count: Optional[int] = None
-    until: Optional[datetime] = None
-    by_month_day: Optional[List[int]] = None
-    by_month: Optional[List[int]] = None
-    by_day: Optional[List[str]] = None
-    by_hour: Optional[List[int]] = None
-
-class Alarm(BaseModel):
-    action: str = "DISPLAY"  # DISPLAY, AUDIO, EMAIL, PROCEDURE
-    trigger_minutes: int = Field(15, description="Minutes before event")
-    description: Optional[str] = None
-
-class Attendee(BaseModel):
-    email: EmailStr
-    name: Optional[str] = None
-    role: str = "REQ-PARTICIPANT"  # REQ-PARTICIPANT, OPT-PARTICIPANT, NON-PARTICIPANT, CHAIR
-    participation_status: str = "NEEDS-ACTION"  # NEEDS-ACTION, ACCEPTED, DECLINED, TENTATIVE, DELEGATED
-    is_organizer: bool = False
 
 class VEvent(BaseModel):
     # Required fields
     uid: Optional[str] = Field(default=None, description="Unique identifier")
     summary: str = Field(..., description="Event title")
     dtstart: datetime = Field(..., description="Event start time")
-    dtstamp: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
+    dtstamp: Optional[datetime] = Field(default_factory=datetime.utcnow, description="Creation timestamp")
     
     # Optional timing
     dtend: Optional[datetime] = None
@@ -64,34 +24,34 @@ class VEvent(BaseModel):
     organizer_email: Optional[EmailStr] = None
     
     # Event properties
-    status: EventStatus = EventStatus.CONFIRMED
-    classification: EventClass = EventClass.PUBLIC
-    transparency: Transparency = Transparency.OPAQUE
-    sequence: int = 0
-    priority: int = 0  # 0 = undefined, 1-4 = high, 5 = medium, 6-9 = low
+    status: Optional[EventStatus] = EventStatus.CONFIRMED
+    classification: Optional[EventClass] = EventClass.PUBLIC
+    transparency: Optional[Transparency] = Transparency.OPAQUE
+    sequence: Optional[int] = 0
+    priority: Optional[int] = 0  # 0 = undefined, 1-4 = high, 5 = medium, 6-9 = low
     
     # Recurrence
     recurrence_rule: Optional[RecurrenceRule] = None
     recurrence_id: Optional[datetime] = None
     
     # Attendees and notifications
-    attendees: List[Attendee] = []
-    alarms: List[Alarm] = []
+    attendees: Optional[List[Attendee]] = []
+    alarms: Optional[List[Alarm]] = []
     
     # Metadata
     url: Optional[str] = None
-    categories: List[str] = []
+    categories: Optional[List[str]] = []
     comments: Optional[str] = None
     
     # Version
-    version: str = "2.0"
+    version: Optional[str] = "2.0"
     
     class Config:
         use_enum_values = True
 
     @classmethod
     def from_vcalendar_string(cls, ics_string: str) -> "VEvent":
-        lines = unfold_lines(ics_string)
+        lines = ModelUtil.unfold_lines(ics_string)
         data = {
             "attendees": [],
             "alarms": [],

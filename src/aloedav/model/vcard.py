@@ -1,39 +1,11 @@
 # model/vcard.py
 
 import uuid
-from pydantic import BaseModel, Field, EmailStr, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl
 from typing import Optional, List
-from enum import Enum
-from aloedav.model.utils import unfold_lines
-
-class PhoneType(str, Enum):
-    VOICE = "voice"
-    FAX = "fax"
-    MESSAGE = "message"
-    CELL = "cell"
-    VIDEO = "video"
-    PAGER = "pager"
-    TEXT = "text"
-    WORK = "work"
-
-class AddressType(str, Enum):
-    HOME = "home"
-    WORK = "work"
-    POSTAL = "postal"
-    PARCEL = "parcel"
-
-class Phone(BaseModel):
-    number: str
-    type: Optional[PhoneType] = None
-    is_preferred: bool = False
-
-class Address(BaseModel):
-    street: Optional[str] = None
-    city: Optional[str] = None
-    state: Optional[str] = None
-    postal_code: Optional[str] = None
-    country: Optional[str] = None
-    type: Optional[AddressType] = None
+from aloedav.model.m00_constant import PhoneType, AddressType
+from aloedav.model.m01_base import Address, Phone
+from aloedav.model import ModelUtil
 
 class VCard(BaseModel):
     # Required fields
@@ -42,9 +14,9 @@ class VCard(BaseModel):
     family_name: Optional[str] = None
 
     # Contact information
-    emails: List[EmailStr] = []
-    phones: List[Phone] = []
-    addresses: List[Address] = []
+    emails: Optional[List[str]] = []
+    phones: Optional[List[Phone]] = []
+    addresses: Optional[List[Address]] = []
     
     # Optional fields
     categories: Optional[list[str]] = None
@@ -64,7 +36,7 @@ class VCard(BaseModel):
 
     @classmethod
     def from_vcard_string(cls, vcard_string: str) -> "VCard":
-        lines = unfold_lines(vcard_string)
+        lines = ModelUtil.unfold_lines(vcard_string)
         data = {
             "fn": None,
             "emails": [],

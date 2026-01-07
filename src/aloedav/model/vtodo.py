@@ -1,51 +1,16 @@
 from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, List
 from datetime import datetime
-from enum import Enum
-from aloedav.model.utils import unfold_lines
-
-class TodoStatus(str, Enum):
-    NEEDS_ACTION = "NEEDS-ACTION"
-    IN_PROCESS = "IN-PROCESS"
-    COMPLETED = "COMPLETED"
-    CANCELLED = "CANCELLED"
-
-class TodoClass(str, Enum):
-    PUBLIC = "PUBLIC"
-    PRIVATE = "PRIVATE"
-    CONFIDENTIAL = "CONFIDENTIAL"
-
-class RecurrenceFrequency(str, Enum):
-    DAILY = "DAILY"
-    WEEKLY = "WEEKLY"
-    MONTHLY = "MONTHLY"
-    YEARLY = "YEARLY"
-
-class RecurrenceRule(BaseModel):
-    frequency: RecurrenceFrequency
-    interval: int = 1
-    count: Optional[int] = None
-    until: Optional[datetime] = None
-    by_month_day: Optional[List[int]] = None
-    by_month: Optional[List[int]] = None
-    by_day: Optional[List[str]] = None
-
-class Alarm(BaseModel):
-    action: str = "DISPLAY"
-    trigger_minutes: int = Field(15, description="Minutes before due date")
-    description: Optional[str] = None
-
-class Attendee(BaseModel):
-    email: EmailStr
-    name: Optional[str] = None
-    role: str = "REQ-PARTICIPANT"
-    participation_status: str = "NEEDS-ACTION"
+from enum import StrEnum
+from aloedav.model import ModelUtil
+from aloedav.model.m00_constant import TodoClass, TodoStatus
+from aloedav.model.m01_base import RecurrenceRule, Alarm, Attendee
 
 class VTodo(BaseModel):
     # Required fields
     uid: str = Field(..., description="Unique identifier")
     summary: str = Field(..., description="Todo title/summary")
-    dtstamp: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
+    dtstamp: Optional[datetime] = Field(default_factory=datetime.utcnow, description="Creation timestamp")
     
     # Task timing
     dtstart: Optional[datetime] = None
@@ -55,39 +20,39 @@ class VTodo(BaseModel):
     
     # Task details
     description: Optional[str] = None
-    categories: List[str] = []
+    categories: Optional[List[str]] = []
     comments: Optional[str] = None
     
     # Task properties
-    status: TodoStatus = TodoStatus.NEEDS_ACTION
-    classification: TodoClass = TodoClass.PUBLIC
-    priority: int = 0  # 0 = undefined, 1-4 = high, 5 = medium, 6-9 = low
-    percent_complete: int = Field(0, ge=0, le=100)
-    sequence: int = 0
+    status: Optional[TodoStatus] = TodoStatus.NEEDS_ACTION
+    classification: Optional[TodoClass] = TodoClass.PUBLIC
+    priority: Optional[int] = 0  # 0 = undefined, 1-4 = high, 5 = medium, 6-9 = low
+    percent_complete: Optional[int] = Field(0, ge=0, le=100)
+    sequence: Optional[int] = 0
     
     # Organizer and attendees
     organizer_name: Optional[str] = None
     organizer_email: Optional[EmailStr] = None
-    attendees: List[Attendee] = []
+    attendees: Optional[List[Attendee]] = []
     
     # Recurrence
     recurrence_rule: Optional[RecurrenceRule] = None
     recurrence_id: Optional[datetime] = None
     
     # Notifications
-    alarms: List[Alarm] = []
+    alarms: Optional[List[Alarm]] = []
     
     # Metadata
     url: Optional[str] = None
     location: Optional[str] = None
-    version: str = "2.0"
+    version: Optional[str] = "2.0"
     
     class Config:
         use_enum_values = True
 
     @classmethod
     def from_vcalendar_string(cls, ics_string: str) -> "VTodo":
-        lines = unfold_lines(ics_string)
+        lines = ModelUtil.unfold_lines(ics_string)
         data = {
             "attendees": [],
             "alarms": [],

@@ -3,11 +3,12 @@ import xmltodict
 import requests
 from datetime import datetime
 from typing import Tuple, Union, List, Dict
-from aloedav.model.calendar import CalendarComponents
-from aloedav.model.vcard    import VCard, Address, PhoneType, Phone, AddressType
-from aloedav.model.vevent   import VEvent, Attendee, Alarm, RecurrenceRule, RecurrenceFrequency, Transparency, EventClass, EventStatus
-from aloedav.model.vjournal import VJournal, Alarm, Attachment, RecurrenceRule, RecurrenceFrequency, JournalClass, JournalStatus
-from aloedav.model.vtodo    import VTodo, Alarm, TodoStatus, TodoClass, RecurrenceFrequency, RecurrenceRule, Attendee
+from aloedav.exceptions import AuthenticationError, ResourceNotFound, PreconditionFailed, WebDAVError, AloeError
+from aloedav.model.m00_constant import CalendarComponents, TodoStatus
+from aloedav.model.vcard    import VCard
+from aloedav.model.vevent   import VEvent
+from aloedav.model.vjournal import VJournal
+from aloedav.model.vtodo    import VTodo
 
 class AloeDAV:
 
@@ -20,11 +21,18 @@ class AloeDAV:
         response = requests.request(method, url, data=body, auth=(self.username, self.password))
 
         if response.status_code in [201, 200]:
-            print(f"Create Collection Success! '{url}' created and initialized.")
+            # Success
+            return
         elif response.status_code == 405:
-            print(f"Create Collection '{url}' already exists.")
+            # Collection already exists (MKCOL returns 405 Method Not Allowed on existing resource)
+            return
+        elif response.status_code == 409 and "resource-must-be-null" in response.text:
+            # Collection already exists (409 Conflict: resource-must-be-null)
+            return
+        elif response.status_code == 401:
+            raise AuthenticationError(f"Authentication failed for {url}", response.status_code)
         else:
-            print(f"Create Collection Failed: {response.status_code} - {response.text}")
+            raise WebDAVError(f"Create Collection Failed: {response.status_code}", response.status_code, response.text)
 
     def _user_create_if_not_exists(self, username):
         user_url = path.join(self.host, username)
@@ -80,14 +88,14 @@ class AloeDAV:
         response = requests.delete(url, headers=headers, auth=(self.username, self.password))
         
         if response.status_code in [200, 204]:
-            print(f"Deleted {filename}")
             return True
         elif response.status_code == 412:
-            print(f"Delete failed: ETag mismatch for {filename}")
-            return False
+            raise PreconditionFailed(f"Delete failed: ETag mismatch for {filename}", response.status_code)
+        elif response.status_code == 404:
+            raise ResourceNotFound(f"Delete failed: {filename} not found", response.status_code)
         else:
-            print(f"Failed to delete: {response.status_code}")
-            return False
+            raise WebDAVError(f"Failed to delete: {response.status_code}", response.status_code, response.text)
+        
     def list_collections(self):
         get_collections = lambda d: d.get('multistatus',{}).get('response',{})
         get_contenttype = lambda c: c.get('propstat',{}).get('prop',{}).get('getcontenttype')
@@ -206,9 +214,10 @@ class AloeDAV:
             etag = response.headers.get("ETag")
             if etag: etag = etag.strip('"')
             return response.text, etag
+        elif response.status_code == 404:
+            raise ResourceNotFound(f"Calendar object not found: {object_filename}", response.status_code)
         else:
-            print(f"Failed to retrieve calendar object: {response.status_code}")
-            return None, None
+            raise WebDAVError(f"Failed to retrieve calendar object: {response.status_code}", response.status_code, response.text)
 
     def get_addressbook_object(self, addressbook_id, object_filename):
         """
@@ -222,10 +231,11 @@ class AloeDAV:
             etag = response.headers.get("ETag")
             if etag: etag = etag.strip('"')
             return response.text, etag
+        elif response.status_code == 404:
+            raise ResourceNotFound(f"Contact not found: {object_filename}", response.status_code)
         else:
-            print(f"Failed to retrieve contact: {response.status_code}")
-            return None, None
-
+            raise WebDAVError(f"Failed to retrieve contact: {response.status_code}", response.status_code, response.text)
+        
     def get_vcard(self, addressbook_id: str, filename: str) -> Tuple[Union[VCard, None], Union[str, None]]:
         """
         High-level getter. Retrieves and deserializes a VCard.
@@ -269,7 +279,9 @@ class AloeDAV:
         
         response = requests.request("PROPFIND", url, data=body, headers={"Depth": "0"}, auth=(self.username, self.password))
         
-        if response.status_code != 207:
+        if response.status_code == 404:
+            raise ResourceNotFound(f"Collection not found: {collection_id}", response.status_code)
+        elif response.status_code != 207:
             return None
 
         doc = xmltodict.parse(response.content)
@@ -303,9 +315,10 @@ class AloeDAV:
 
         response = requests.request("REPORT", url, data=body, auth=(self.username, self.password))
         
-        if response.status_code != 207:
-            print(f"Sync failed: {response.status_code}")
-            return [], [], sync_token
+        if response.status_code == 404:
+            raise ResourceNotFound(f"Collection not found: {collection_id}", response.status_code)
+        elif response.status_code != 207:
+            raise WebDAVError(f"Sync failed: {response.status_code}", response.status_code, response.text)
 
         doc = xmltodict.parse(response.content)
         ms = doc.get('D:multistatus', doc.get('multistatus', {}))
@@ -355,11 +368,9 @@ class AloeDAV:
         response = requests.put(url, data=vcard_data.encode('utf-8'), headers=headers, auth=(self.username, self.password))
 
         if response.status_code in [201, 204]:
-            print(f"vCard created: {filename}")
             return filename
         else:
-            print(f"Failed to create vCard: {response.status_code} - {response.text}")
-            return None
+            raise WebDAVError(f"Failed to create vCard: {response.status_code}", response.status_code, response.text)
 
     def update_vcard(self, addressbook_id, filename, vcard_obj: VCard, etag=None):
         """
@@ -384,14 +395,11 @@ class AloeDAV:
         response = requests.put(url, data=vcard_data.encode('utf-8'), headers=headers, auth=(self.username, self.password))
 
         if response.status_code in [200, 204]:
-            print(f"vCard updated: {filename}")
             return True
         elif response.status_code == 412:
-            print("Update failed: ETag mismatch (resource has changed on server).")
-            return False
+            raise PreconditionFailed("Update failed: ETag mismatch", response.status_code)
         else:
-            print(f"Failed to update vCard: {response.status_code} - {response.text}")
-            return False
+            raise WebDAVError(f"Failed to update vCard: {response.status_code}", response.status_code, response.text)
 
 
     def create_calendar_object(self, calendar_id, item_obj):
@@ -412,11 +420,9 @@ class AloeDAV:
         response = requests.put(url, data=ics_data.encode('utf-8'), headers=headers, auth=(self.username, self.password))
 
         if response.status_code in [201, 204]:
-            print(f"Calendar object created: {filename}")
             return filename
         else:
-            print(f"Failed to create object: {response.status_code} - {response.text}")
-            return None
+            raise WebDAVError(f"Failed to create object: {response.status_code}", response.status_code, response.text)
 
     def update_calendar_object(self, calendar_id, filename, item_obj, etag=None):
         """
@@ -438,17 +444,51 @@ class AloeDAV:
         response = requests.put(url, data=ics_data.encode('utf-8'), headers=headers, auth=(self.username, self.password))
         
         if response.status_code in [200, 204]:
-            print(f"Calendar object updated: {filename}")
             return True
         elif response.status_code == 412:
-            print("Update failed: ETag mismatch (resource has changed on server).")
-            return False
+            raise PreconditionFailed("Update failed: ETag mismatch", response.status_code)
         else:
-            print(f"Failed to update object: {response.status_code} - {response.text}")
-            return False
+            raise WebDAVError(f"Failed to update object: {response.status_code}", response.status_code, response.text)
 
-if __name__ == "__main__" and False:
+if __name__ == "__main__":
     import uuid
+
+    def setup_infrastructure(client):
+        # 1. Define 'What you want' (Configuration)
+        required_collections = [
+            {
+                "type": "addressbook",
+                "id": "addressbook_test",
+                "name": "Test Contacts",
+                "desc": "A verified addressbook"
+            },
+            {
+                "type": "calendar",
+                "id": "calendar_test",
+                "name": "Test Calendar",
+                "desc": "A verified calendar"
+            },
+            # Easy to add more here...
+        ]
+
+        print("--- Verifying Infrastructure ---")
+        
+        # 2. Execute the logic loop
+        for col in required_collections:
+            try:
+                if col["type"] == "addressbook":
+                    client.create_addressbook(col["name"], col["desc"], col["id"])
+                    print(f"[OK] Addressbook: {col['name']}")
+                    
+                elif col["type"] == "calendar":
+                    client.create_calendar(col["name"], col["desc"], col["id"])
+                    print(f"[OK] Calendar:    {col['name']}")
+                    
+            except AloeError as e:
+                # 3. Handle actual failures (Auth, 500s, etc) distinctly from "already exists"
+                print(f"[ERR] Failed to ensure {col['name']} ({col['id']}): {e}")
+                # In production, you might raise here to stop the app if a critical collection fails
+                # raise RuntimeError(f"Critical infrastructure missing: {col['id']}") from e
 
     # Configuration
     RADICALE_HOST = "http://vera-webdav-svc.vera.svc.cluster.local:5232"
@@ -463,8 +503,17 @@ if __name__ == "__main__" and False:
     abook_id = "addressbook_test"
     cal_id = "calendar_test"
     
-    aloedav.create_addressbook("Test Contacts", "A verified addressbook", abook_id)
-    aloedav.create_calendar("Test Calendar", "A verified calendar", cal_id)
+    # try:
+    #     aloedav.create_addressbook("Test Contacts", "A verified addressbook", abook_id)
+    # except WebDAVError as e:
+    #     print(e)
+
+    # try:
+    #     aloedav.create_calendar("Test Calendar", "A verified calendar", cal_id)
+    # except WebDAVError as e:
+    #     print(e)
+
+    setup_infrastructure(aloedav)
     
     print("Collections available:", [c[0] for c in aloedav.list_collections()])
     print("-" * 30)
@@ -595,7 +644,7 @@ if __name__ == "__main__" and False:
     # >Deleting event-d25e58a8-0291-4773-9c31-ef1980ae6acd.ics...
     # >Deleted event-d25e58a8-0291-4773-9c31-ef1980ae6acd.ics
 
-if __name__ == "__main__" and False:
+if __name__ == "__main__":
     import uuid
 
     # Configuration
@@ -611,8 +660,17 @@ if __name__ == "__main__" and False:
     abook_id = "addressbook_test"
     cal_id = "calendar_test"
     
-    aloedav.create_addressbook("Test Contacts", "A verified addressbook", abook_id)
-    aloedav.create_calendar("Test Calendar", "A verified calendar", cal_id)
+    # try:
+    #     aloedav.create_addressbook("Test Contacts", "A verified addressbook", abook_id)
+    # except WebDAVError as e:
+    #     print(e)
+
+    # try:
+    #     aloedav.create_calendar("Test Calendar", "A verified calendar", cal_id)
+    # except WebDAVError as e:
+    #     print(e)
+
+    setup_infrastructure(aloedav)
     
     print("Collections available:", [c[0] for c in aloedav.list_collections()])
     print("-" * 30)
@@ -727,9 +785,19 @@ if __name__ == "__main__":
     print("--- Setting up Collections ---")
     abook_id = "addressbook_test"
     cal_id = "calendar_test"
-    
-    aloedav.create_addressbook("Test Contacts", "A verified addressbook", abook_id)
-    aloedav.create_calendar("Test Calendar", "A verified calendar", cal_id)
+
+    # try:
+    #     aloedav.create_addressbook("Test Contacts", "A verified addressbook", abook_id)
+    # except WebDAVError as e:
+    #     print(e)
+
+    # try:
+    #     aloedav.create_calendar("Test Calendar", "A verified calendar", cal_id)
+    # except WebDAVError as e:
+    #     print(e)
+
+    setup_infrastructure(aloedav)
+
     print("Collections available:", [c[0] for c in aloedav.list_collections()])
     print("-" * 30)
 
@@ -883,8 +951,18 @@ if __name__ == "__main__":
     abook_id = "addressbook_test"
     cal_id = "calendar_test"
     
-    aloedav.create_addressbook("Test Contacts", "A verified addressbook", abook_id)
-    aloedav.create_calendar("Test Calendar", "A verified calendar", cal_id)
+    # try:
+    #     aloedav.create_addressbook("Test Contacts", "A verified addressbook", abook_id)
+    # except WebDAVError as e:
+    #     print(e)
+
+    # try:
+    #     aloedav.create_calendar("Test Calendar", "A verified calendar", cal_id)
+    # except WebDAVError as e:
+    #     print(e)
+
+    setup_infrastructure(aloedav)
+
     print("Collections available:", [c[0] for c in aloedav.list_collections()])
     print("-" * 30)
 
