@@ -2,50 +2,26 @@ from pydantic import BaseModel, Field, EmailStr
 from typing import Optional
 from datetime import datetime
 from aloedav.model import ModelUtil
-from aloedav.model.m00_constant import EventStatus, EventClass, Transparency
-from aloedav.model.m01_base import Alarm, Attendee, RecurrenceRule
+from aloedav.model.m00_constant import EventStatus, Transparency
+from aloedav.model.m01_base import VCalendar, Alarm, Attendee, RecurrenceRule, Attachment
 
 
-class VEvent(BaseModel):
-    # Required fields
-    uid: Optional[str] = Field(default=None, description="Unique identifier")
-    extended_attributes: dict[str, str] = Field(default_factory=dict)
-    summary: str = Field(..., description="Event title")
-    dtstart: datetime = Field(..., description="Event start time")
-    dtstamp: Optional[datetime] = Field(default_factory=datetime.utcnow, description="Creation timestamp")
-    
-    # Optional timing
-    dtend: Optional[datetime] = None
-    duration: Optional[str] = None  # ISO 8601 duration format, e.g., "PT1H"
-    
-    # Event details
-    description: Optional[str] = None
-    location: Optional[str] = None
-    organizer_name: Optional[str] = None
-    organizer_email: Optional[EmailStr] = None
-    
+class VEvent(VCalendar):
+    version: Optional[str] = "2.0"
+
     # Event properties
     status: Optional[EventStatus] = EventStatus.CONFIRMED
-    classification: Optional[EventClass] = EventClass.PUBLIC
     transparency: Optional[Transparency] = Transparency.OPAQUE
-    sequence: Optional[int] = 0
     priority: Optional[int] = 0  # 0 = undefined, 1-4 = high, 5 = medium, 6-9 = low
-    
-    # Recurrence
-    recurrence_rule: Optional[RecurrenceRule] = None
-    recurrence_id: Optional[datetime] = None
-    
-    # Attendees and notifications
+
+    location: Optional[str] = None
     attendees: Optional[list[Attendee]] = []
-    alarms: Optional[list[Alarm]] = []
+
+    duration: Optional[str] = None  # ISO 8601
+    dtend: Optional[datetime] = None
     
     # Metadata
-    url: Optional[str] = None
-    categories: Optional[list[str]] = []
     comments: Optional[str] = None
-    
-    # Version
-    version: Optional[str] = "2.0"
     
     class Config:
         use_enum_values = True
@@ -57,6 +33,7 @@ class VEvent(BaseModel):
             "attendees": [],
             "alarms": [],
             "categories": [],
+            "attachments": []
         }
         
         current_context = "ROOT" # ROOT -> VCALENDAR -> VEVENT -> VALARM
@@ -157,6 +134,18 @@ class VEvent(BaseModel):
                         elif k == "UNTIL": r_data["until"] = parse_dt(v)
                     if "frequency" in r_data:
                         data["recurrence_rule"] = RecurrenceRule(**r_data)
+            elif key == "ATTACH":
+                # Basic handling for URL attachments
+                mime = params.get("FMTTYPE", "application/octet-stream")
+                # Try to derive a filename from URL or default
+                fname = "attachment"
+                if "/" in value:
+                    fname = value.split("/")[-1]
+                data["attachments"].append(Attachment(
+                    filename=fname,
+                    mime_type=mime,
+                    url=value
+                ))
 
             elif current_context == "VALARM":
                 if key == "ACTION": current_alarm["action"] = value
@@ -233,6 +222,15 @@ class VEvent(BaseModel):
                 params.append(f"CN={attendee.name}")
             
             lines.append(f"ATTENDEE;{';'.join(params)}:mailto:{attendee.email}")
+
+        # --- Attachments ---
+        # Note: Inline binary data is possible but discouraged for large files.
+        # This implementation prefers URL references if available.
+        for attachment in self.attachments:
+            if attachment.url:
+                lines.append(f"ATTACH;FMTTYPE={attachment.mime_type}:{attachment.url}")
+            # If you needed to handle inline data, you'd base64 encode it here, 
+            # but that significantly increases file size.
 
         # --- Recurrence Rule (RRULE) ---
         if self.recurrence_rule:

@@ -17,18 +17,18 @@ class AloeDAV:
         self.username = username
         self.password = password
 
-    def _create(self, method, url, body=None):
+    def _create(self, method, url, body=None) -> bool:
         response = requests.request(method, url, data=body, auth=(self.username, self.password))
 
         if response.status_code in [201, 200]:
             # Success
-            return
+            return True
         elif response.status_code == 405:
             # Collection already exists (MKCOL returns 405 Method Not Allowed on existing resource)
-            return
+            return False
         elif response.status_code == 409 and "resource-must-be-null" in response.text:
             # Collection already exists (409 Conflict: resource-must-be-null)
-            return
+            return False
         elif response.status_code == 401:
             raise AuthenticationError(f"Authentication failed for {url}", response.status_code)
         else:
@@ -38,7 +38,7 @@ class AloeDAV:
         user_url = path.join(self.host, username)
         self._create("MKCOL", user_url)
 
-    def create_addressbook(self, display_name, description, addressbook_id):
+    def create_addressbook(self, display_name, description, addressbook_id) -> bool:
         url = path.join(self.host, self.username, addressbook_id)
         body=f"""<?xml version="1.0" encoding="UTF-8" ?>
 <D:mkcol xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
@@ -53,9 +53,9 @@ class AloeDAV:
     </D:prop>
   </D:set>
 </D:mkcol>"""
-        self._create("MKCOL", url,body)
+        return self._create("MKCOL", url,body)
 
-    def create_calendar(self, display_name, description, calendar_id, components:CalendarComponents=CalendarComponents.VEVENT|CalendarComponents.VTODO|CalendarComponents.VJOURNAL):
+    def create_calendar(self, display_name, description, calendar_id, components:CalendarComponents=CalendarComponents.VEVENT|CalendarComponents.VTODO|CalendarComponents.VJOURNAL)  -> bool:
         url = path.join(self.host, self.username, calendar_id)
         body=f"""<?xml version="1.0" encoding="UTF-8" ?>
 <D:mkcalendar xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
@@ -73,12 +73,12 @@ class AloeDAV:
   </D:set>
 </D:mkcalendar>
 """
-        self._create("MKCALENDAR", url,body)
+        return self._create("MKCALENDAR", url,body)
 
-    def _extract_name_from_href(self, href):
+    def _extract_name_from_href(self, href) -> str:
         return href.rstrip('/').split('/')[-1]
 
-    def delete_object(self, collection_id, filename, etag=None):
+    def delete_object(self, collection_id, filename, etag=None)->bool:
         url = path.join(self.host, self.username, collection_id, filename)
         headers = {}
         if etag:
@@ -96,7 +96,7 @@ class AloeDAV:
         else:
             raise WebDAVError(f"Failed to delete: {response.status_code}", response.status_code, response.text)
         
-    def list_collections(self):
+    def list_collections(self)->list:
         get_collections = lambda d: d.get('multistatus',{}).get('response',{})
         get_contenttype = lambda c: c.get('propstat',{}).get('prop',{}).get('getcontenttype')
         
@@ -115,7 +115,7 @@ class AloeDAV:
         return [(c.get('href',''), get_contenttype(c)) for c in get_collections(doc) if type(c.get('propstat',{})) == dict]
 
 
-    def list_calendar_objects(self, calendar_id, component_type="VEVENT", start: datetime = None, end: datetime = None):
+    def list_calendar_objects(self, calendar_id, component_type="VEVENT", start: datetime = None, end: datetime = None)-> dict:
         """
         Lists entries in a specific calendar, filtering by component type.
         component_type options: 'VEVENT', 'VTODO', 'VJOURNAL'
@@ -168,7 +168,7 @@ class AloeDAV:
                 results.append({'href': r.get('href'), 'etag': etag, 'data': cal_data})
         return results
 
-    def list_addressbook_entries(self, addressbook_id):
+    def list_addressbook_entries(self, addressbook_id)-> dict:
         """
         Lists all vCards in a specific addressbook.
         """
@@ -202,7 +202,7 @@ class AloeDAV:
                 results.append({'href': r.get('href'), 'etag': etag, 'data': card_data})
         return results
 
-    def get_calendar_object(self, calendar_id, object_filename):
+    def get_calendar_object(self, calendar_id, object_filename)->tuple[str,str]:
         """
         Retrieves a single calendar object (ics) by its filename.
         Example: object_filename = '1234-5678-90.ics'
@@ -219,7 +219,7 @@ class AloeDAV:
         else:
             raise WebDAVError(f"Failed to retrieve calendar object: {response.status_code}", response.status_code, response.text)
 
-    def get_addressbook_object(self, addressbook_id, object_filename):
+    def get_addressbook_object(self, addressbook_id, object_filename)->tuple[str,str]:
         """
         Retrieves a single vCard (vcf) by its filename.
         Example: object_filename = 'contact-uid-123.vcf'
@@ -349,7 +349,7 @@ class AloeDAV:
                 
         return updated, deleted, new_token
 
-    def create_vcard(self, addressbook_id, vcard_obj: VCard):
+    def create_vcard(self, addressbook_id, vcard_obj: VCard) -> str:
         """
         Creates a new vCard in the specified addressbook using the Pydantic model.
         Returns the filename created.
@@ -372,7 +372,7 @@ class AloeDAV:
         else:
             raise WebDAVError(f"Failed to create vCard: {response.status_code}", response.status_code, response.text)
 
-    def update_vcard(self, addressbook_id, filename, vcard_obj: VCard, etag=None):
+    def update_vcard(self, addressbook_id, filename, vcard_obj: VCard, etag=None) -> bool:
         """
         Updates an existing vCard.
         
@@ -402,7 +402,7 @@ class AloeDAV:
             raise WebDAVError(f"Failed to update vCard: {response.status_code}", response.status_code, response.text)
 
 
-    def create_calendar_object(self, calendar_id, item_obj):
+    def create_calendar_object(self, calendar_id, item_obj) -> str:
         """
         Creates a new calendar item (Event, Todo, or Journal).
         :param item_obj: An instance of VEvent, VTodo, or VJournal
@@ -424,7 +424,7 @@ class AloeDAV:
         else:
             raise WebDAVError(f"Failed to create object: {response.status_code}", response.status_code, response.text)
 
-    def update_calendar_object(self, calendar_id, filename, item_obj, etag=None):
+    def update_calendar_object(self, calendar_id, filename, item_obj, etag=None) -> bool:
         """
         Updates an existing calendar item.
         :param filename: The specific .ics file resource (e.g., 'event-123.ics')

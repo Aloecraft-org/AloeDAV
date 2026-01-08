@@ -1,36 +1,29 @@
 # model/vcard.py
 
 import uuid
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, EmailStr
 from typing import Optional
 from aloedav.model.m00_constant import PhoneType, AddressType
-from aloedav.model.m01_base import Address, Phone
+from aloedav.model.m01_base import VItem, Address, Phone
 from aloedav.model import ModelUtil
 
-class VCard(BaseModel):
+class VCard(VItem):
+    version: Optional[str] = "3.0"
     # Required fields
     full_name: str = Field(..., alias="fn")
-    extended_attributes: Optional[dict[str, str]] = Field(default_factory=dict)
     given_name: Optional[str] = None
     family_name: Optional[str] = None
 
     # Contact information
-    emails: Optional[list[str]] = []
+    emails: Optional[list[EmailStr]] = []
     phones: Optional[list[Phone]] = []
     addresses: Optional[list[Address]] = []
     
-    # Optional fields
-    categories: Optional[list[str]] = None
     organization: Optional[str] = None
     job_title: Optional[str] = None
     department: Optional[str] = None
     nickname: Optional[str] = None
-    url: Optional[HttpUrl] = None
     notes: Optional[str] = None
-    
-    # Additional metadata
-    version: str = "3.0"
-    uid: Optional[str] = None
     
     class Config:
         use_enum_values = True

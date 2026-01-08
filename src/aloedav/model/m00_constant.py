@@ -33,7 +33,7 @@ class EventStatus(StrEnum):
     CONFIRMED = "CONFIRMED"
     CANCELLED = "CANCELLED"
 
-class EventClass(StrEnum):
+class Classification(StrEnum):
     PUBLIC = "PUBLIC"
     PRIVATE = "PRIVATE"
     CONFIDENTIAL = "CONFIDENTIAL"
@@ -47,21 +47,11 @@ class JournalStatus(StrEnum):
     FINAL = "FINAL"
     CANCELLED = "CANCELLED"
 
-class JournalClass(StrEnum):
-    PUBLIC = "PUBLIC"
-    PRIVATE = "PRIVATE"
-    CONFIDENTIAL = "CONFIDENTIAL"
-
 class TodoStatus(StrEnum):
     NEEDS_ACTION = "NEEDS-ACTION"
     IN_PROCESS = "IN-PROCESS"
     COMPLETED = "COMPLETED"
     CANCELLED = "CANCELLED"
-
-class TodoClass(StrEnum):
-    PUBLIC = "PUBLIC"
-    PRIVATE = "PRIVATE"
-    CONFIDENTIAL = "CONFIDENTIAL"
 
 class CalendarComponents(Flag):
     INVALID=0

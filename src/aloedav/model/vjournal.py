@@ -2,49 +2,20 @@ from pydantic import BaseModel, Field, EmailStr
 from typing import Optional
 from datetime import datetime
 from aloedav.model import ModelUtil
-from aloedav.model.m00_constant import JournalClass, JournalStatus
-from aloedav.model.m01_base import RecurrenceRule, Attachment, Alarm
+from aloedav.model.m00_constant import Classification, JournalStatus
+from aloedav.model.m01_base import VCalendar, RecurrenceRule, Attachment, Alarm
 
-class VJournal(BaseModel):
-    # Required fields
-    uid: str = Field(..., description="Unique identifier")
-    extended_attributes: dict[str, str] = Field(default_factory=dict)
-    dtstamp: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
-    
-    # Journal content
-    summary: Optional[str] = None
-    description: Optional[str] = Field(None, description="Main journal entry text")
-    
-    # Timing
-    dtstart: Optional[datetime] = None
-    
+class VJournal(VCalendar):
+    version: Optional[str] = "2.0"
+
     # Journal properties
     status: JournalStatus = JournalStatus.DRAFT
-    classification: JournalClass = JournalClass.PRIVATE
-    sequence: int = 0
-    
-    # Organizer
-    organizer_name: Optional[str] = None
-    organizer_email: Optional[EmailStr] = None
-    
-    # Organization
-    categories: list[str] = []
     tags: list[str] = []
     
-    # Related content
-    attachments: list[Attachment] = []
-    related_to: Optional[str] = None
-    url: Optional[str] = None
-    
-    # Recurrence (for recurring journal entries)
-    recurrence_rule: Optional[RecurrenceRule] = None
-    recurrence_id: Optional[datetime] = None
-    
-    # Notifications
-    alarms: list[Alarm] = []
-    
+    classification: Optional[Classification] = Classification.PRIVATE
+
     # Metadata
-    version: str = "2.0"
+    related_to: Optional[str] = None
     comments: Optional[str] = None
     
     class Config:
