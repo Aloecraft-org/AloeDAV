@@ -18,20 +18,26 @@ class AloeDAV:
         self.password = password
 
     def _create(self, method, url, body=None) -> bool:
+        TAG="[AloeDAV._create]"
         response = requests.request(method, url, data=body, auth=(self.username, self.password))
 
         if response.status_code in [201, 200]:
             # Success
+            info(f"{TAG} Collection created: {url}")
             return True
         elif response.status_code == 405:
             # Collection already exists (MKCOL returns 405 Method Not Allowed on existing resource)
+            info(f"{TAG} Collection already exists: {url}")
             return False
         elif response.status_code == 409 and "resource-must-be-null" in response.text:
             # Collection already exists (409 Conflict: resource-must-be-null)
+            info(f"{TAG} Collection already exists: {url}")
             return False
         elif response.status_code == 401:
-            raise AuthenticationError(f"Authentication failed for {url}", response.status_code)
+            error(f"{TAG} Authentication failed for: {url}")
+            raise AuthenticationError(f"Authentication failed for {url} - {response.text}", response.status_code)
         else:
+            error(f"{TAG} Create Collection failed for: {url} - {response.text}")
             raise WebDAVError(f"Create Collection Failed: {response.status_code}", response.status_code, response.text)
 
     def _user_create_if_not_exists(self, username):

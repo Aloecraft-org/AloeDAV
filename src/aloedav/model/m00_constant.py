@@ -53,6 +53,16 @@ class TodoStatus(StrEnum):
     COMPLETED = "COMPLETED"
     CANCELLED = "CANCELLED"
 
+class WebDAVItemType(StrEnum):
+    VCONTACT="VCONTACT"
+    VEVENT="VEVENT"
+    VJOURNAL="VJOURNAL"
+    VTODO="VTODO"
+
+class WebDAVCollectionType(StrEnum):
+    CALDAV="CALDAV"
+    CARDDAV="CARDDAV"
+
 class CalendarComponents(Flag):
     INVALID=0
     VEVENT=auto()
