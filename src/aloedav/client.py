@@ -1,9 +1,11 @@
+from logging import info, error
+
 from os import path
 import xmltodict
 import requests
 from datetime import datetime
 from typing import Tuple, Union, List, Dict
-from aloedav.exceptions import AuthenticationError, ResourceNotFound, PreconditionFailed, WebDAVError, AloeError
+from aloedav.exceptions import AuthenticationError, ResourceNotFound, PreconditionFailed, WebDAVError, AloeDAVClientError
 from aloedav.model.m00_constant import CalendarComponents, TodoStatus
 from aloedav.model.vcard    import VCard
 from aloedav.model.vevent   import VEvent
