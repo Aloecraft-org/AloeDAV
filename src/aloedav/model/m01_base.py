@@ -51,6 +51,9 @@ class VItem(BaseModel):
     version: str
     categories: Optional[list[str]] = []
     url: Optional[HttpUrl] = None
+    filename: Optional[str] = None
+    etag: Optional[str] = None
+    raw_contents: Optional[str] = None
 
 class VCalendar(VItem):
     summary: Optional[str] = None

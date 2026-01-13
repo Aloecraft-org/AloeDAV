@@ -59,6 +59,13 @@ class WebDAVItemType(StrEnum):
     VJOURNAL="VJOURNAL"
     VTODO="VTODO"
 
+class Component(Flag):
+    INVALID=0
+    VEVENT=auto()
+    VJOURNAL=auto()
+    VTODO=auto()
+    VCONTACT=auto()
+
 class WebDAVCollectionType(StrEnum):
     CALDAV="CALDAV"
     CARDDAV="CARDDAV"

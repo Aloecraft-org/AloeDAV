@@ -41,6 +41,9 @@ class AloeDAV:
         self.username = username
         self.password = password
 
+    def _with_auth(username, password, session):
+        TAG="[AloeDAV._with_auth]"
+
     def _create(self, method, url, body=None) -> bool:
         TAG="[AloeDAV._create]"
         response = requests.request(method, url, data=body, auth=(self.username, self.password))
