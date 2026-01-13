@@ -97,15 +97,16 @@ class AloeDAV:
       <D:displayname>{display_name}</D:displayname>
       <C:calendar-description>{description}</C:calendar-description>
       <C:supported-calendar-component-set>{
-"        <C:comp name=\"VEVENT\"/>\n" if CalendarComponents.VEVENT in components else "" + \
-"        <C:comp name=\"VTODO\"/>\n" if CalendarComponents.VTODO in components else "" + \
-"        <C:comp name=\"VJOURNAL\"/>\n" if CalendarComponents.VJOURNAL in components else ""
+("        <C:comp name=\"VEVENT\"/>\n" if CalendarComponents.VEVENT in components else "") + \
+("        <C:comp name=\"VTODO\"/>\n" if CalendarComponents.VTODO in components else "") + \
+("        <C:comp name=\"VJOURNAL\"/>\n" if CalendarComponents.VJOURNAL in components else "")
       }
       </C:supported-calendar-component-set>
     </D:prop>
   </D:set>
 </D:mkcalendar>
 """
+        print(body)
         return self._create("MKCALENDAR", url,body)
 
     def _extract_name_from_href(self, href) -> str:
