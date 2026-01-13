@@ -4,6 +4,10 @@ from pydantic import BaseModel
 from enum import StrEnum, Flag, auto
 from abc import ABC, abstractmethod
 
+class CollectionType(StrEnum):
+    ADDRESSBOOK="ADDRESSBOOK"
+    CALENDAR="CALENDAR"
+
 class ComponentSet(Flag):
     INVALID=0
     VEVENT=auto()
@@ -28,6 +32,7 @@ class Item(BaseModel):
         return f"{self.uid}.{self.file_ext}"
 
 class Collection(BaseModel, ABC):
+    collection_type: CollectionType
     uid: str
     component_set: ComponentSet
     displayname: str
