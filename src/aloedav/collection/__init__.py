@@ -5,8 +5,8 @@ from enum import StrEnum, Flag, auto
 from abc import ABC, abstractmethod
 
 class CollectionType(StrEnum):
-    ADDRESSBOOK="ADDRESSBOOK"
-    CALENDAR="CALENDAR"
+    ADDRESSBOOK="addressbook"
+    CALENDAR="calendar"
 
 class ComponentSet(Flag):
     INVALID=0
