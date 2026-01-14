@@ -27,13 +27,14 @@ class Collection(BaseModel, ABC):
     component_set: ComponentSet
     displayname: str
     description: str
-
+    ctag: str = None
+    synctoken: str = None
     items: dict[str, Item] = {}
 
     @abstractmethod
-    def get_sync_token(self)-> str|None:
+    def refresh_sync_token(self)-> str|None:
         """
-        get_sync_token
+        refresh_sync_token
 
         returns:
         - current sync token

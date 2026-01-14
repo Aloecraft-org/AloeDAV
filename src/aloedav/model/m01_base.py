@@ -55,6 +55,7 @@ class VItem(BaseModel):
     uid: Optional[str] = Field(default=None, description="Unique identifier")
     extended_attributes: dict[str, str] = Field(default_factory=dict)
     version: str
+    content_type: Optional[str] = None
     categories: Optional[list[str]] = []
     url: Optional[HttpUrl] = None
     filename: Optional[str] = None
@@ -62,6 +63,10 @@ class VItem(BaseModel):
     raw_contents: Optional[str] = None
 
 class VCalendar(VItem):
+    content_type:str = "text/calendar; charset=utf-8"
+    file_ext:str = "ics"
+    version: str = "2.0"
+
     summary: Optional[str] = None
     dtstart: Optional[datetime] = None
     dtstamp: Optional[datetime] = Field(default_factory=utc_now, description="Creation timestamp")
@@ -78,9 +83,12 @@ class VCalendar(VItem):
 # ========================================================
 
 class Item(BaseModel, ABC):
-    uid: str
+    uid: Optional[str] = None
+    content_type: str
     file_ext: str
     version: str
+    rev: Optional[str] = None
+    prod_id: Optional[str] = None
     extended_attributes: Optional[dict[str, str]] = None
     categories: Optional[list[str]] = None
     etag: Optional[str] = None
@@ -101,6 +109,7 @@ class Item(BaseModel, ABC):
         return f"{self.uid}.{self.file_ext}"
     
 class CalendarItem(Item):
+    content_type:str = "text/calendar; charset=utf-8"
     file_ext:str = "ics"
     version: str = "2.0"
     summary: Optional[str] = None

@@ -29,7 +29,7 @@ class TestFuncs(unittest.TestCase):
             "A verified addressbook", 
             "addressbook_test")
         
-        initial_sync_token = address_book.get_sync_token()
+        initial_sync_token = address_book.refresh_sync_token()
         
         contact = VCARD(
             uid=f"contact-{uuid4()}",
@@ -109,7 +109,7 @@ class TestFuncs(unittest.TestCase):
             "A verified calendar", 
             "calendar_test")
         
-        initial_sync_token = calendar.get_sync_token()
+        initial_sync_token = calendar.refresh_sync_token()
 
         event = VEVENT(
             uid=f"event-{uuid4()}",
@@ -189,7 +189,7 @@ class TestFuncs(unittest.TestCase):
             "A verified calendar", 
             "calendar_test")
         
-        initial_sync_token = calendar.get_sync_token()
+        initial_sync_token = calendar.refresh_sync_token()
 
         task = VTODO(
             uid=f"task-{uuid4()}",

@@ -35,7 +35,7 @@ class LocalCollection(Collection):
                 case CollectionType.CALENDAR:
                     component_set = ComponentSet.VJOURNAL | ComponentSet.VTODO | ComponentSet.VEVENT
         collection = cls(uid=id, displayname=displayname, description=description, component_set=component_set, collection_type = collection_type)
-    
+
         sync_entry = SyncEntry(
             ordinal= 1,
             token=str(uuid4()),
@@ -67,9 +67,10 @@ class LocalCollection(Collection):
 
         return cls.create(display_name, description, calendar_id, CollectionType.CALENDAR, component_set)
 
-    def get_sync_token(self)-> str|None:
+    def refresh_sync_token(self)-> str|None:
         sync_entry = sorted(self.sync_table, key=lambda sync_entry: sync_entry.ordinal)[-1]
-        return sync_entry.token if sync_entry else None
+        self.synctoken = sync_entry.token if sync_entry else None
+        return self.synctoken
     
     def sync_collection(self, sync_token: str) -> dict:
         prev_sync_entry = next((sync_entry for sync_entry in self.sync_table if sync_entry.token == sync_token))
@@ -85,7 +86,7 @@ class LocalCollection(Collection):
         return {
             "deleted":deleted, 
             "updated":updated, 
-            "sync_token": self.get_sync_token()
+            "sync_token": self.refresh_sync_token()
         }
     
     def delete_item(self, filename:str, etag=None)->bool:

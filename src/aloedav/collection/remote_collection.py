@@ -28,14 +28,15 @@ class RemoteCollection(Collection):
         client.create_calendar(display_name, description, calendar_id, components)
         return cls(client, calendar_id)
 
-    def get_sync_token(self)-> str|None:
+    def refresh_sync_token(self)-> str|None:
         """
-        get_sync_token
+        refresh_sync_token
 
         returns:
         - current sync token
         """
-        pass
+        dav_collection = self.client.fetch_collection(self.collection_id)
+        self.synctoken = dav_collection.synctoken
 
     def sync_collection(self, sync_token: str) -> tuple[list[dict], list[dict], str]:
         """
