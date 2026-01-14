@@ -22,6 +22,19 @@ dynamic = ["dependencies"]
 [tool.setuptools.dynamic]
 dependencies = {file = ["config/requirements.txt"]}
 
+[project.optional-dependencies]
+test = [
+    "pytest>=9.0",
+    "coverage",
+]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "--verbose"
+testpaths = [
+    "src/test",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["aloedav*"]
