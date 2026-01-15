@@ -66,7 +66,7 @@ class VCARD(Item):
 BEGIN:VCARD
 VERSION:{self.version}
 PRODID:{self.prod_id}
-REV:{datetime.now(timezone.utc()).strftime('%Y-%m-%dT%H:%M:%SZ')}
+REV:{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}
 FN:{self.full_name}
 N:{self.family_name or ''};{self.given_name or ''};;;
 """]
