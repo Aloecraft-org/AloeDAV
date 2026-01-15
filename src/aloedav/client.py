@@ -2,6 +2,7 @@ import requests
 import xmltodict
 from os import path
 from datetime import datetime
+from pydantic import BaseModel
 from logging import info, error
 
 from aloedav.exceptions import AuthenticationError, ResourceNotFound, PreconditionFailed, WebDAVError, AloeDAVClientError
@@ -16,7 +17,7 @@ from aloedav.model.m01_collection import DAVCollection
 from aloedav.model.m02_vcard import VCARD
 from abc import ABC, abstractmethod
 
-class BaseAloeDAVClient(ABC):
+class BaseAloeDAVClient(BaseModel, ABC):
     @abstractmethod
     def create_addressbook(self, display_name, description, addressbook_id) -> bool:
         pass    
