@@ -6,10 +6,10 @@ from uuid import uuid4
 from aloedav.exceptions import PreconditionFailed, WebDAVError
 from aloedav.collection import Collection, ComponentSet, Item, CollectionType
 from aloedav.model.m00_constant import CalendarComponents
-from aloedav.client import AloeDAVClient, BaseAloeDAVClient
+from aloedav.client import AloeDAVClient
 
 class RemoteCollection(Collection):
-    client:BaseAloeDAVClient
+    client:AloeDAVClient
     href:str
     ctag:str
     synctoken:str
