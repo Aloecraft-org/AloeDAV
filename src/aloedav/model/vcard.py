@@ -24,6 +24,7 @@ class VCard(VItem):
     department: Optional[str] = None
     nickname: Optional[str] = None
     notes: Optional[str] = None
+    url: Optional[str] = None
     
     class Config:
         use_enum_values = True
