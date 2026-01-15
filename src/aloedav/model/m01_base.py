@@ -88,7 +88,7 @@ class Item(BaseModel, ABC):
     file_ext: str
     version: str
     rev: Optional[str] = None
-    prod_id: Optional[str] = None
+    prod_id: Optional[str] = "-//aloecraft.org//AloeDAV 1.0//EN"
     extended_attributes: Optional[dict[str, str]] = None
     categories: Optional[list[str]] = None
     etag: Optional[str] = None
