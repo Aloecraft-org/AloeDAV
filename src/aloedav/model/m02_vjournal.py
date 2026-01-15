@@ -77,8 +77,9 @@ class VJOURNAL(CalendarItem):
             unique_cats = list(set(all_categories))
             lines.append(f"CATEGORIES:{','.join(unique_cats)}")
 
-        for k, v in self.extended_attributes.items():
-            lines.append(f"{k}:{v}")
+        if self.extended_attributes:
+            for k, v in self.extended_attributes.items():
+                lines.append(f"{k}:{v}")
 
         # --- Status & Classification ---
         lines.append(f"STATUS:{self.status.value if hasattr(self.status, 'value') else self.status}")
@@ -97,11 +98,12 @@ class VJOURNAL(CalendarItem):
         # --- Attachments ---
         # Note: Inline binary data is possible but discouraged for large files.
         # This implementation prefers URL references if available.
-        for attachment in self.attachments:
-            if attachment.url:
-                lines.append(f"ATTACH;FMTTYPE={attachment.mime_type}:{attachment.url}")
-            # If you needed to handle inline data, you'd base64 encode it here, 
-            # but that significantly increases file size.
+        if self.attachments:
+            for attachment in self.attachments:
+                if attachment.url:
+                    lines.append(f"ATTACH;FMTTYPE={attachment.mime_type}:{attachment.url}")
+                # If you needed to handle inline data, you'd base64 encode it here, 
+                # but that significantly increases file size.
 
         # --- Recurrence Rule (RRULE) ---
         if self.recurrence_rule:
@@ -132,8 +134,9 @@ class VJOURNAL(CalendarItem):
 
         # --- Alarms (VALARM) ---
         # While less common for journals, they are valid (e.g., "Time to write your entry!")
-        for alarm in self.alarms:
-            lines.append(f"""BEGIN:VALARM
+        if self.alarms:
+            for alarm in self.alarms:
+                lines.append(f"""BEGIN:VALARM
 ACTION:{alarm.action}
 TRIGGER:-PT{alarm.trigger_minutes}M
 DESCRIPTION:{alarm.description if alarm.description else (self.summary or "Journal Reminder")}

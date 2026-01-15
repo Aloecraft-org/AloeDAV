@@ -85,8 +85,9 @@ class VTODO(CalendarItem):
         if self.categories:
             lines.append(f"CATEGORIES:{','.join(self.categories)}")
         
-        for k, v in self.extended_attributes.items():
-            lines.append(f"{k}:{v}")
+        if self.extended_attributes:
+            for k, v in self.extended_attributes.items():
+                lines.append(f"{k}:{v}")
 
         # --- Status & Priority ---
         lines.append(f"STATUS:{self.status.value if hasattr(self.status, 'value') else self.status}")
@@ -101,23 +102,25 @@ class VTODO(CalendarItem):
             lines.append(f"ORGANIZER{cn_param}:mailto:{self.organizer_email}")
 
         # --- Attendees ---
-        for attendee in self.attendees:
-            params = []
-            params.append(f"ROLE={attendee.role}")
-            params.append(f"PARTSTAT={attendee.participation_status}")
-            if attendee.name:
-                params.append(f"CN={attendee.name}")
-            
-            lines.append(f"ATTENDEE;{';'.join(params)}:mailto:{attendee.email}")
+        if self.attendees:
+            for attendee in self.attendees:
+                params = []
+                params.append(f"ROLE={attendee.role}")
+                params.append(f"PARTSTAT={attendee.participation_status}")
+                if attendee.name:
+                    params.append(f"CN={attendee.name}")
+                
+                lines.append(f"ATTENDEE;{';'.join(params)}:mailto:{attendee.email}")
 
         # --- Attachments ---
         # Note: Inline binary data is possible but discouraged for large files.
         # This implementation prefers URL references if available.
-        for attachment in self.attachments:
-            if attachment.url:
-                lines.append(f"ATTACH;FMTTYPE={attachment.mime_type}:{attachment.url}")
-            # If you needed to handle inline data, you'd base64 encode it here, 
-            # but that significantly increases file size.
+        if self.attachments:
+            for attachment in self.attachments:
+                if attachment.url:
+                    lines.append(f"ATTACH;FMTTYPE={attachment.mime_type}:{attachment.url}")
+                # If you needed to handle inline data, you'd base64 encode it here, 
+                # but that significantly increases file size.
 
         # --- Recurrence Rule (RRULE) ---
         if self.recurrence_rule:
@@ -143,8 +146,9 @@ class VTODO(CalendarItem):
             lines.append(f"RRULE:{';'.join(parts)}")
 
         # --- Alarms (VALARM) ---
-        for alarm in self.alarms:
-            lines.append(f"""BEGIN:VALARM
+        if self.alarms:
+            for alarm in self.alarms:
+                lines.append(f"""BEGIN:VALARM
 ACTION:{alarm.action}
 TRIGGER:-PT{alarm.trigger_minutes}M
 DESCRIPTION:{alarm.description if alarm.description else (self.summary or "Journal Reminder")}

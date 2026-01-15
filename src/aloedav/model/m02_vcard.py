@@ -82,22 +82,25 @@ N:{self.family_name or ''};{self.given_name or ''};;;
             lines.append(f"TITLE:{self.job_title}")
         
         # Emails
-        for email in self.emails:
-            lines.append(f"EMAIL;TYPE=INTERNET:{email}")
+        if self.emails:
+            for email in self.emails:
+                lines.append(f"EMAIL;TYPE=INTERNET:{email}")
             
         # Phones
-        for phone in self.phones:
-            p_val = phone.type.value if hasattr(phone.type, 'value') else phone.type
-            type_str = f";TYPE={p_val}" if p_val else ""
-            pref_str = ";TYPE=PREF" if phone.is_preferred else ""
-            lines.append(f"TEL{type_str}{pref_str}:{phone.number}")
+        if self.phones:
+            for phone in self.phones:
+                p_val = phone.type.value if hasattr(phone.type, 'value') else phone.type
+                type_str = f";TYPE={p_val}" if p_val else ""
+                pref_str = ";TYPE=PREF" if phone.is_preferred else ""
+                lines.append(f"TEL{type_str}{pref_str}:{phone.number}")
 
         # Addresses
-        for addr in self.addresses:
-            a_val = addr.type.value if hasattr(addr.type, 'value') else addr.type
-            type_str = f";TYPE={a_val}" if a_val else ""
-            # ADR format: ;;street;city;region;code;country
-            lines.append(f"ADR{type_str}:;;{addr.street or ''};{addr.city or ''};")
+        if self.addresses:
+            for addr in self.addresses:
+                a_val = addr.type.value if hasattr(addr.type, 'value') else addr.type
+                type_str = f";TYPE={a_val}" if a_val else ""
+                # ADR format: ;;street;city;region;code;country
+                lines.append(f"ADR{type_str}:;;{addr.street or ''};{addr.city or ''};")
 
         if self.url:
             lines.append(f"URL:{self.url}")
@@ -107,9 +110,9 @@ N:{self.family_name or ''};{self.given_name or ''};;;
         if self.categories:
             lines.append(f"CATEGORIES:{','.join(self.categories)}")
         
-        for k, v in self.extended_attributes.items():
-            lines.append(f"{k}:{v}")
-
+        if self.extended_attributes:
+            for k, v in self.extended_attributes.items():
+                lines.append(f"{k}:{v}")
 
         lines.append("END:VCARD")
         return "\r\n".join(lines)
