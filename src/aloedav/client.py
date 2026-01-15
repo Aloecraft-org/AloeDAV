@@ -17,7 +17,7 @@ from aloedav.model.m01_collection import DAVCollection
 from aloedav.model.m02_vcard import VCARD
 from abc import ABC, abstractmethod
 
-class BaseAloeDAVClient(BaseModel, ABC):
+class BaseAloeDAVClient(ABC):
     @abstractmethod
     def create_addressbook(self, display_name, description, addressbook_id) -> bool:
         pass    
