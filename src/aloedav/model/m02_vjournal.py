@@ -35,6 +35,7 @@ class VJOURNAL(CalendarItem):
         """
         Serializes the journal entry into a valid iCalendar (ICS) string with a VJOURNAL component.
         """
+        from uuid import uuid4
 
         lines = [ "BEGIN:VJOURNAL" ]
 
@@ -43,6 +44,9 @@ class VJOURNAL(CalendarItem):
             return dt.strftime("%Y%m%dT%H%M%S")
 
         # --- Core Properties ---
+        # Ensure UID exists
+        if not self.uid:
+            self.uid = f"memo-{uuid4()}"
         lines.append(f"UID:{self.uid}")
         lines.append(f"DTSTAMP:{format_dt(self.dtstamp)}")
         

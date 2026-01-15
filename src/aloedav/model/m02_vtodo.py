@@ -48,6 +48,7 @@ class VTODO(CalendarItem):
         """
         Serializes the task into a valid iCalendar (ICS) string with a VTODO component.
         """
+        from uuid import uuid4
 
         lines = ["BEGIN:VTODO"]
 
@@ -56,6 +57,8 @@ class VTODO(CalendarItem):
             return dt.strftime("%Y%m%dT%H%M%S")
 
         # --- Core Properties ---
+        if not self.uid:
+            self.uid = f"task-{uuid4()}"
         lines.append(f"UID:{self.uid}")
         lines.append(f"DTSTAMP:{format_dt(self.dtstamp)}")
         lines.append(f"SUMMARY:{self.summary}")
