@@ -28,6 +28,10 @@ class VCARD(Item):
     @property
     def fn(self):
         return self.full_name
+    
+    @fn.setter
+    def fn(self, value):
+        self.full_name = value
 
     def update(self, update:"VCARD"):
         super().update(update)
