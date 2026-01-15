@@ -1,5 +1,14 @@
 from enum import StrEnum, Flag, auto
 
+NS='xmlns:D="DAV:" xmlns:CR="urn:ietf:params:xml:ns:carddav" xmlns:C="urn:ietf:params:xml:ns:caldav"  xmlns:cs="http://calendarserver.org/ns/" xmlns:RADICALE="http://radicale.org/ns/"'
+NS_MAP = {
+    'DAV:': None,
+    'urn:ietf:params:xml:ns:carddav': None,
+    'urn:ietf:params:xml:ns:caldav': None,
+    'http://calendarserver.org/ns/': None,
+    'http://radicale.org/ns/': None
+}
+
 class AlarmAction(StrEnum):
     DISPLAY = "DISPLAY"
     AUDIO = "AUDIO"
