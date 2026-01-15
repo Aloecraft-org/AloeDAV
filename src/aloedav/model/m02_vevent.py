@@ -141,8 +141,9 @@ class VEVENT(CalendarItem):
             lines.append(f"RRULE:{';'.join(parts)}")
 
         # --- Alarms (VALARM) ---
-        for alarm in self.alarms:
-            lines.append(f"""BEGIN:VALARM
+        if self.alarms:
+            for alarm in self.alarms:
+                lines.append(f"""BEGIN:VALARM
 ACTION:{alarm.action}
 TRIGGER:-PT{alarm.trigger_minutes}M
 DESCRIPTION:{alarm.description if alarm.description else (self.summary or "Journal Reminder")}
