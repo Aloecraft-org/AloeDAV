@@ -23,6 +23,7 @@ class VCARD(Item):
     department: Optional[str] = None
     nickname: Optional[str] = None
     notes: Optional[str] = None
+    url: Optional[str] = None
 
     @property
     def fn(self):
