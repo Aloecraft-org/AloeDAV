@@ -113,3 +113,6 @@ N:{self.family_name or ''};{self.given_name or ''};;;
 
         lines.append("END:VCARD")
         return "\r\n".join(lines)
+    
+    def to_webdav_string(self) -> str:
+        return self.to_vcard_string()

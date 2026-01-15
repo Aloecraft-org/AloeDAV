@@ -155,3 +155,6 @@ PRODID:{self.prod_id}"""]
         lines.append("END:VCALENDAR")
 
         return "\r\n".join(lines)
+
+    def to_webdav_string(self) -> str:
+        return self.to_vcalendar_string()
