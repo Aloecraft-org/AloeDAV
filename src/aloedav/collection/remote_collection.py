@@ -1,5 +1,5 @@
 from enum import StrEnum
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from collections.abc import Iterable
 from uuid import uuid4
 
@@ -9,6 +9,8 @@ from aloedav.model.m00_constant import CalendarComponents
 from aloedav.client import AloeDAVClient
 
 class RemoteCollection(Collection):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     client:AloeDAVClient = Field(exclude=True)
     href:str
     ctag:str
