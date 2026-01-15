@@ -93,6 +93,7 @@ class Item(BaseModel, ABC):
     categories: Optional[list[str]] = None
     etag: Optional[str] = None
     raw_contents: Optional[str] = None
+    url: Optional[str] = None
 
     @abstractmethod
     def update(self, update:"Item"):
