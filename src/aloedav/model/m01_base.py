@@ -117,7 +117,7 @@ class CalendarItem(Item):
     dtstart: Optional[datetime] = None
     dtstamp: Optional[datetime] = Field(default_factory=utc_now, description="Creation timestamp")
     description: Optional[str] = None
-    sequence: Optional[int] = None
+    sequence: Optional[int] = 0
     classification: Optional[Classification] = Classification.PUBLIC
     organizer_name: Optional[str] = None
     organizer_email: Optional[EmailStr] = None
