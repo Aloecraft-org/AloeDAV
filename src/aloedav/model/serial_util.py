@@ -312,10 +312,14 @@ def webdav_data(contents:str)->dict:
 
     return context[0]
 
-def to_model(data_dict:dict)->list[VCARD|VTODO|VJOURNAL|VEVENT]:
+def to_model(data, etag:str=None)->list[VCARD|VTODO|VJOURNAL|VEVENT]:
+    data_dict = data if isinstance(data, dict) else webdav_data(data)
+
     if data_dict["content"]["context"] == "VCARD":
         vcard = VCARD(**data_dict["content"])
         vcard.raw_contents = data_dict["raw_contents"]
+        if etag:
+            vcard.etag = etag
         return [vcard]
     elif data_dict["content"]["context"] == "VCALENDAR":
         result = []
@@ -324,14 +328,20 @@ def to_model(data_dict:dict)->list[VCARD|VTODO|VJOURNAL|VEVENT]:
                 case "VTODO": 
                     new_item = VTODO(**item)
                     new_item.raw_contents = data_dict["raw_contents"]
+                    if etag:
+                        new_item.etag = etag
                     result.append(new_item)
                 case "VJOURNAL": 
                     new_item = VJOURNAL(**item)
                     new_item.raw_contents = data_dict["raw_contents"]
+                    if etag:
+                        new_item.etag = etag
                     result.append(new_item)
                 case "VEVENT": 
                     new_item = VEVENT(**item)
                     new_item.raw_contents = data_dict["raw_contents"]
+                    if etag:
+                        new_item.etag = etag
                     result.append(new_item)
                 case _:
                     raise WebDAVError(f"Unknown element type: {item["context"]}")
