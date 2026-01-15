@@ -162,7 +162,7 @@ BEGIN:VCALENDAR
 VERSION:{self.version}
 PRODID:{self.prod_id}"""]
 
-        lines += self.to_vevent_string()
+        lines.append(self.to_vevent_string())
         lines.append("END:VCALENDAR")
 
         return "\r\n".join(lines)
