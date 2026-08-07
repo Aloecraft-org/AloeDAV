@@ -37,49 +37,45 @@ class VJOURNAL(CalendarItem):
         """
         from uuid import uuid4
 
-        lines = [ "BEGIN:VJOURNAL" ]
+        esc = ModelUtil.escape_text
+        param = ModelUtil.escape_param
+        format_dt = ModelUtil.format_dt
 
-        def format_dt(dt: datetime) -> str:
-            # iCalendar format: YYYYMMDDTHHMMSS
-            return dt.strftime("%Y%m%dT%H%M%S")
+        lines = [ "BEGIN:VJOURNAL" ]
 
         # --- Core Properties ---
         # Ensure UID exists
         if not self.uid:
             self.uid = f"memo-{uuid4()}"
-        lines.append(f"UID:{self.uid}")
+        lines.append(f"UID:{esc(self.uid)}")
         lines.append(f"DTSTAMP:{format_dt(self.dtstamp)}")
-        
+
         if self.summary:
-            lines.append(f"SUMMARY:{self.summary}")
-        
+            lines.append(f"SUMMARY:{esc(self.summary)}")
+
         # VJOURNAL entries represent a specific date/time
         if self.dtstart:
             lines.append(f"DTSTART:{format_dt(self.dtstart)}")
 
         # --- Content ---
         if self.description:
-            # Ensure description is properly escaped if it contains newlines or special chars
-            # Simple replacement for demonstration; a full implementation might need more robust escaping
-            desc = self.description.replace("\n", "\\n")
-            lines.append(f"DESCRIPTION:{desc}")
+            lines.append(f"DESCRIPTION:{esc(self.description)}")
 
         if self.url:
-            lines.append(f"URL:{self.url}")
-        
-        # Combine categories and tags for the CATEGORIES property
-        all_categories = self.categories.copy()
-        if self.tags:
-            all_categories.extend(self.tags)
-        
+            lines.append(f"URL:{esc(self.url)}")
+
+        # Combine categories and tags for the CATEGORIES property, preserving
+        # order so the serialization is stable across calls.
+        all_categories = list(self.categories or [])
+        all_categories.extend(self.tags or [])
+
         if all_categories:
-            # Remove duplicates if any
-            unique_cats = list(set(all_categories))
-            lines.append(f"CATEGORIES:{','.join(unique_cats)}")
+            unique_cats = list(dict.fromkeys(all_categories))
+            lines.append(f"CATEGORIES:{','.join(esc(c) for c in unique_cats)}")
 
         if self.extended_attributes:
             for k, v in self.extended_attributes.items():
-                lines.append(f"{k}:{v}")
+                lines.append(f"{k}:{esc(v)}")
 
         # --- Status & Classification ---
         lines.append(f"STATUS:{self.status.value if hasattr(self.status, 'value') else self.status}")
@@ -88,12 +84,12 @@ class VJOURNAL(CalendarItem):
 
         # --- Organizer ---
         if self.organizer_email:
-            cn_param = f";CN={self.organizer_name}" if self.organizer_name else ""
+            cn_param = f";CN={param(self.organizer_name)}" if self.organizer_name else ""
             lines.append(f"ORGANIZER{cn_param}:mailto:{self.organizer_email}")
 
         # --- Relations ---
         if self.related_to:
-            lines.append(f"RELATED-TO:{self.related_to}")
+            lines.append(f"RELATED-TO:{esc(self.related_to)}")
 
         # --- Attachments ---
         # Note: Inline binary data is possible but discouraged for large files.
@@ -136,28 +132,30 @@ class VJOURNAL(CalendarItem):
         # While less common for journals, they are valid (e.g., "Time to write your entry!")
         if self.alarms:
             for alarm in self.alarms:
-                lines.append(f"""BEGIN:VALARM
-ACTION:{alarm.action}
-TRIGGER:-PT{alarm.trigger_minutes}M
-DESCRIPTION:{alarm.description if alarm.description else (self.summary or "Journal Reminder")}
-END:VALARM""")
+                lines.extend([
+                    "BEGIN:VALARM",
+                    f"ACTION:{alarm.action}",
+                    f"TRIGGER:-PT{alarm.trigger_minutes}M",
+                    f"DESCRIPTION:{esc(alarm.description or self.summary or 'Journal Reminder')}",
+                    "END:VALARM",
+                ])
 
         lines.append("END:VJOURNAL")
-        return "\r\n".join(lines)
+        return ModelUtil.join_lines(lines)
 
     def to_vcalendar_string(self) -> str:
         """
         Serializes the journal into a valid iCalendar (ICS) string.
         """
-        lines = [f"""
-BEGIN:VCALENDAR
-VERSION:{self.version}
-PRODID:{self.prod_id}"""]
+        lines = [
+            "BEGIN:VCALENDAR",
+            f"VERSION:{self.version}",
+            f"PRODID:{ModelUtil.escape_text(self.prod_id)}",
+            self.to_vjournal_string(),
+            "END:VCALENDAR",
+        ]
 
-        lines.append(self.to_vjournal_string())
-        lines.append("END:VCALENDAR")
-
-        return "\r\n".join(lines)
+        return ModelUtil.join_lines(lines)
 
     def to_webdav_string(self) -> str:
         return self.to_vcalendar_string()

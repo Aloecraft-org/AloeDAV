@@ -9,10 +9,13 @@ description = ""
 authors = [{email = "michael@aloecraft.org"}]
 maintainers = [{email = "michael@aloecraft.org"}]
 readme = "README.md"
-requires-python = ">=3.9"
+# StrEnum requires 3.11 and the nested-quote f-strings in client.py and
+# serial_util.py require 3.12; the package does not import below that.
+requires-python = ">=3.12"
 
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
     "Operating System :: OS Independent",
 ]
 

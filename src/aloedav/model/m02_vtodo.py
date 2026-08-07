@@ -50,22 +50,22 @@ class VTODO(CalendarItem):
         """
         from uuid import uuid4
 
-        lines = ["BEGIN:VTODO"]
+        esc = ModelUtil.escape_text
+        param = ModelUtil.escape_param
+        format_dt = ModelUtil.format_dt
 
-        def format_dt(dt: datetime) -> str:
-            # iCalendar format: YYYYMMDDTHHMMSS
-            return dt.strftime("%Y%m%dT%H%M%S")
+        lines = ["BEGIN:VTODO"]
 
         # --- Core Properties ---
         if not self.uid:
             self.uid = f"task-{uuid4()}"
-        lines.append(f"UID:{self.uid}")
+        lines.append(f"UID:{esc(self.uid)}")
         lines.append(f"DTSTAMP:{format_dt(self.dtstamp)}")
-        lines.append(f"SUMMARY:{self.summary}")
-        
+        lines.append(f"SUMMARY:{esc(self.summary)}")
+
         if self.dtstart:
             lines.append(f"DTSTART:{format_dt(self.dtstart)}")
-            
+
         # VTODO specific: DUE takes precedence over DURATION
         if self.due:
             lines.append(f"DUE:{format_dt(self.due)}")
@@ -77,17 +77,17 @@ class VTODO(CalendarItem):
 
         # --- Details ---
         if self.description:
-            lines.append(f"DESCRIPTION:{self.description}")
+            lines.append(f"DESCRIPTION:{esc(self.description)}")
         if self.location:
-            lines.append(f"LOCATION:{self.location}")
+            lines.append(f"LOCATION:{esc(self.location)}")
         if self.url:
-            lines.append(f"URL:{self.url}")
+            lines.append(f"URL:{esc(self.url)}")
         if self.categories:
-            lines.append(f"CATEGORIES:{','.join(self.categories)}")
-        
+            lines.append(f"CATEGORIES:{','.join(esc(c) for c in self.categories)}")
+
         if self.extended_attributes:
             for k, v in self.extended_attributes.items():
-                lines.append(f"{k}:{v}")
+                lines.append(f"{k}:{esc(v)}")
 
         # --- Status & Priority ---
         lines.append(f"STATUS:{self.status.value if hasattr(self.status, 'value') else self.status}")
@@ -98,18 +98,18 @@ class VTODO(CalendarItem):
 
         # --- Organizer ---
         if self.organizer_email:
-            cn_param = f";CN={self.organizer_name}" if self.organizer_name else ""
+            cn_param = f";CN={param(self.organizer_name)}" if self.organizer_name else ""
             lines.append(f"ORGANIZER{cn_param}:mailto:{self.organizer_email}")
 
         # --- Attendees ---
         if self.attendees:
             for attendee in self.attendees:
                 params = []
-                params.append(f"ROLE={attendee.role}")
-                params.append(f"PARTSTAT={attendee.participation_status}")
+                params.append(f"ROLE={param(attendee.role)}")
+                params.append(f"PARTSTAT={param(attendee.participation_status)}")
                 if attendee.name:
-                    params.append(f"CN={attendee.name}")
-                
+                    params.append(f"CN={param(attendee.name)}")
+
                 lines.append(f"ATTENDEE;{';'.join(params)}:mailto:{attendee.email}")
 
         # --- Attachments ---
@@ -148,29 +148,31 @@ class VTODO(CalendarItem):
         # --- Alarms (VALARM) ---
         if self.alarms:
             for alarm in self.alarms:
-                lines.append(f"""BEGIN:VALARM
-ACTION:{alarm.action}
-TRIGGER:-PT{alarm.trigger_minutes}M
-DESCRIPTION:{alarm.description if alarm.description else (self.summary or "Journal Reminder")}
-END:VALARM""")
+                lines.extend([
+                    "BEGIN:VALARM",
+                    f"ACTION:{alarm.action}",
+                    f"TRIGGER:-PT{alarm.trigger_minutes}M",
+                    f"DESCRIPTION:{esc(alarm.description or self.summary or 'Reminder')}",
+                    "END:VALARM",
+                ])
 
         lines.append("END:VTODO")
-        
-        return "\r\n".join(lines)
+
+        return ModelUtil.join_lines(lines)
 
     def to_vcalendar_string(self) -> str:
         """
         Serializes the task into a valid iCalendar (ICS) string.
         """
-        lines = [f"""
-BEGIN:VCALENDAR
-VERSION:{self.version}
-PRODID:{self.prod_id}"""]
+        lines = [
+            "BEGIN:VCALENDAR",
+            f"VERSION:{self.version}",
+            f"PRODID:{ModelUtil.escape_text(self.prod_id)}",
+            self.to_vtodo_string(),
+            "END:VCALENDAR",
+        ]
 
-        lines.append(self.to_vtodo_string())
-        lines.append("END:VCALENDAR")
-
-        return "\r\n".join(lines)
+        return ModelUtil.join_lines(lines)
 
     def to_webdav_string(self) -> str:
         return self.to_vcalendar_string()

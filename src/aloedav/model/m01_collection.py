@@ -30,7 +30,7 @@ class DAVCollection(BaseModel):
         prop = get_ok_propfind(response)
         return cls(
             href=get_href(response),
-            displayname=prop.get('displayname'),
+            displayname=prop.get('displayname') or '',
             collection_type=get_collection_type(prop),
             component_set=get_component_set(prop),
             description=get_description(prop),

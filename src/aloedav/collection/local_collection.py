@@ -129,8 +129,10 @@ class LocalCollection(Collection):
         """
         if not filename in self.items:
             raise WebDAVError(f"Update failed: Filename \"{filename}\" not found")
-        if etag and not item.etag == etag:
-            raise PreconditionFailed("Update failed: ETag mismatch")        
+        # Compare against the stored item: the caller's etag is the version it
+        # believes it is updating, so a mismatch means someone else got there first.
+        if etag and not self.items[filename].etag == etag:
+            raise PreconditionFailed("Update failed: ETag mismatch")
 
         sync_entry = SyncEntry(
             ordinal=len(self.sync_table) + 1,

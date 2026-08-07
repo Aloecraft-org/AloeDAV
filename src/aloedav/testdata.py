@@ -112,9 +112,9 @@ TEST_VEVENT_SIMPLE_DICT = {
                 "categories": [],
                 "attachments": [],
                 "uid": "19970610T172345Z-AF23B2@example.com",
-                "dtstamp": "1997-06-10T17:23:45",
-                "dtstart": "1997-07-14T17:00:00",
-                "dtend": "1997-07-15T03:59:59",
+                "dtstamp": "1997-06-10T17:23:45+00:00",
+                "dtstart": "1997-07-14T17:00:00+00:00",
+                "dtend": "1997-07-15T03:59:59+00:00",
                 "summary": "Bastille Day Party"
             }
         ],
@@ -158,8 +158,8 @@ TEST_VEVENT_FOLDED_DICT = {
                 "categories": [],
                 "attachments": [],
                 "uid": "20260106T120000Z-123456@example.com",
-                "dtstamp": "2026-01-06T12:00:00",
-                "dtstart": "2026-01-06T13:00:00",
+                "dtstamp": "2026-01-06T12:00:00+00:00",
+                "dtstart": "2026-01-06T13:00:00+00:00",
                 "summary": "Project Planning Meeting",
                 "description": "We will discuss the roadmap for the upcoming quarter, specifically focusing on the integration of the new AI modules and the legacy backend systems. Please come prepared with your status reports.",
                 "location": "Conference Room B with the really long name that forces a line break in the middle of the word."
@@ -230,8 +230,8 @@ TEST_VEVENT_COMPLEX_DICT = {
                     }
                 ],
                 "uid": "recur-meeting-123@example.com",
-                "dtstamp": "2026-01-14T10:00:00",
-                "dtstart": "2026-02-01T09:00:00",
+                "dtstamp": "2026-01-14T10:00:00+00:00",
+                "dtstart": "2026-02-01T09:00:00+00:00",
                 "duration": "PT1H",
                 "summary": "Weekly Project Sync",
                 "description": "Weekly sync to discuss project blockers.",
@@ -292,8 +292,8 @@ TEST_VTODO_WITH_ALARM_DICT = {
                 "categories": [],
                 "attachments": [],
                 "uid": "task-456@example.com",
-                "dtstamp": "2026-01-14T12:00:00",
-                "due": "2026-01-20T17:00:00",
+                "dtstamp": "2026-01-14T12:00:00+00:00",
+                "due": "2026-01-20T17:00:00+00:00",
                 "summary": "Submit Quarterly Report",
                 "status": "NEEDS-ACTION",
                 "priority": 1
@@ -338,7 +338,7 @@ TEST_VCALENDAR_MIXED_DICT = {
                 "categories": [],
                 "attachments": [],
                 "uid": "event-001@example.com",
-                "dtstart": "2026-03-01T12:00:00",
+                "dtstart": "2026-03-01T12:00:00+00:00",
                 "summary": "Lunch with Client"
             },
             {

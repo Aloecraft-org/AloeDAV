@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from collections.abc import Iterable
 from uuid import uuid4
 
-from aloedav.exceptions import PreconditionFailed, WebDAVError
+from aloedav.exceptions import PreconditionFailed, WebDAVError, ResourceNotFound, AloeDAVClientError
 from aloedav.collection import Collection, ComponentSet, Item, CollectionType
 from aloedav.model.m00_constant import CalendarComponents
 from aloedav.client import AloeDAVClient
@@ -12,30 +12,37 @@ class RemoteCollection(Collection):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     client:AloeDAVClient = Field(exclude=True)
-    href:str
-    ctag:str
-    synctoken:str
-    contentcount:str
+    # Server-assigned metadata: absent until the collection has been fetched.
+    href:str = ""
+    ctag:str = ""
+    synctoken:str = ""
+    contentcount:str = ""
 
     @classmethod
     def get_or_create(cls, client:AloeDAVClient, displayname:str, description:str, collection_id:str, collection_type:CollectionType, component_set: ComponentSet=None):
         """
-        create
-        """
-        if not component_set:
-            match collection_type:
-                case CollectionType.ADDRESSBOOK:
-                    component_set = ComponentSet.VCONTACT
-                case CollectionType.CALENDAR:
-                    component_set = ComponentSet.VJOURNAL | ComponentSet.VTODO | ComponentSet.VEVENT
+        Creates the collection on the server if it does not exist, then returns
+        it populated with the server's metadata.
 
-        return cls(
-            client = client,
-            uid=collection_id,
-            displayname=displayname, 
-            description=description, 
-            component_set=component_set, 
-            collection_type = collection_type)
+        displayname and description are ignored if the collection already exists
+        """
+        match collection_type:
+            case CollectionType.ADDRESSBOOK:
+                return cls.get_or_create_addressbook(client, displayname, description, collection_id)
+            case CollectionType.CALENDAR:
+                components = CalendarComponents.INVALID
+                if component_set:
+                    if ComponentSet.VEVENT in component_set:
+                        components |= CalendarComponents.VEVENT
+                    if ComponentSet.VJOURNAL in component_set:
+                        components |= CalendarComponents.VJOURNAL
+                    if ComponentSet.VTODO in component_set:
+                        components |= CalendarComponents.VTODO
+                else:
+                    components = CalendarComponents.VEVENT | CalendarComponents.VTODO | CalendarComponents.VJOURNAL
+                return cls.get_or_create_calendar(client, displayname, description, collection_id, components)
+            case _:
+                raise AloeDAVClientError(f"Cannot create collection of type: {collection_type}")
 
     @classmethod
     def get_or_create_addressbook(cls, client:AloeDAVClient, display_name:str, description:str, addressbook_id:str):
@@ -76,14 +83,14 @@ class RemoteCollection(Collection):
 
     def _refresh(self):
         dav_collection = self.client.fetch_collection(self.uid)
-        self.href=dav_collection.href,
-        self.ctag=dav_collection.ctag,
-        self.synctoken=dav_collection.synctoken,
-        self.contentcount=dav_collection.contentcount,
-        self.displayname=dav_collection.displayname, 
-        self.description=dav_collection.description, 
-        self.component_set=dav_collection.component_set, 
-        self.collection_type=dav_collection.collection_type
+        self.href = dav_collection.href
+        self.ctag = dav_collection.ctag
+        self.synctoken = dav_collection.synctoken
+        self.contentcount = dav_collection.contentcount
+        self.displayname = dav_collection.displayname
+        self.description = dav_collection.description
+        self.component_set = dav_collection.component_set
+        self.collection_type = dav_collection.collection_type
 
     def refresh_sync_token(self)-> str|None:
         """
@@ -122,7 +129,7 @@ class RemoteCollection(Collection):
         returns:
         - True if successful
         """
-        return self.delete_object(self.uid, filename, etag)
+        return self.client.delete_object(self.uid, filename, etag)
 
 
     def get_item(self, filename:str)->Item:
@@ -131,8 +138,14 @@ class RemoteCollection(Collection):
 
         returns item
         """
-        return next(self.client.fetch_object(self.uid, filename))
-        
+        # fetch_object returns every component in the resource; a collection
+        # entry addressed by filename holds exactly one for our purposes.
+        items = self.client.fetch_object(self.uid, filename)
+        if not items:
+            raise ResourceNotFound(f"No object found in {self.uid}/{filename}")
+        return items[0]
+
+
     def update_item(self, filename:str, item: Item, etag:str=None) -> str:
         """
         update_item
@@ -167,7 +180,7 @@ class RemoteCollection(Collection):
         elif self.collection_type == CollectionType.CALENDAR:
             return self.client.list_calendar_objects(self.uid)
         else:
-            raise AloeDAVClient(f"Cannot list items for collection type: {self.collection_type}")
+            raise AloeDAVClientError(f"Cannot list items for collection type: {self.collection_type}")
         
 
     def delete_collection(self)->bool:

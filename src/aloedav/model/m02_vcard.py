@@ -66,60 +66,68 @@ class VCARD(Item):
     def to_vcard_string(self) -> str:
         from uuid import uuid4
         from datetime import datetime, timezone
-        lines = [f"""
-BEGIN:VCARD
-VERSION:{self.version}
-PRODID:{self.prod_id}
-REV:{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}
-FN:{self.full_name}
-N:{self.family_name or ''};{self.given_name or ''};;;
-"""]
+        from aloedav.model import ModelUtil
+
+        esc = ModelUtil.escape_text
+        param = ModelUtil.escape_param
 
         # Ensure UID exists
         if not self.uid:
             self.uid = f"contact-{uuid4()}"
-        lines.append(f"UID:{self.uid}")
+
+        lines = [
+            "BEGIN:VCARD",
+            f"VERSION:{self.version}",
+            f"PRODID:{esc(self.prod_id)}",
+            f"REV:{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
+            f"FN:{esc(self.full_name)}",
+            f"N:{esc(self.family_name or '')};{esc(self.given_name or '')};;;",
+            f"UID:{esc(self.uid)}",
+        ]
 
         if self.organization:
-            lines.append(f"ORG:{self.organization}")
+            lines.append(f"ORG:{esc(self.organization)}")
         if self.job_title:
-            lines.append(f"TITLE:{self.job_title}")
-        
+            lines.append(f"TITLE:{esc(self.job_title)}")
+
         # Emails
         if self.emails:
             for email in self.emails:
-                lines.append(f"EMAIL;TYPE=INTERNET:{email}")
-            
+                lines.append(f"EMAIL;TYPE=INTERNET:{esc(email)}")
+
         # Phones
         if self.phones:
             for phone in self.phones:
                 p_val = phone.type.value if hasattr(phone.type, 'value') else phone.type
-                type_str = f";TYPE={p_val}" if p_val else ""
+                type_str = f";TYPE={param(p_val)}" if p_val else ""
                 pref_str = ";TYPE=PREF" if phone.is_preferred else ""
-                lines.append(f"TEL{type_str}{pref_str}:{phone.number}")
+                lines.append(f"TEL{type_str}{pref_str}:{esc(phone.number)}")
 
         # Addresses
         if self.addresses:
             for addr in self.addresses:
                 a_val = addr.type.value if hasattr(addr.type, 'value') else addr.type
-                type_str = f";TYPE={a_val}" if a_val else ""
-                # ADR format: ;;street;city;region;code;country
-                lines.append(f"ADR{type_str}:;;{addr.street or ''};{addr.city or ''};")
+                type_str = f";TYPE={param(a_val)}" if a_val else ""
+                # ADR format: pobox;ext;street;city;region;code;country
+                components = ";".join(esc(c or '') for c in (
+                    "", "", addr.street, addr.city,
+                    addr.state, addr.postal_code, addr.country))
+                lines.append(f"ADR{type_str}:{components}")
 
         if self.url:
-            lines.append(f"URL:{self.url}")
+            lines.append(f"URL:{esc(self.url)}")
         if self.notes:
-            lines.append(f"NOTE:{self.notes}")
+            lines.append(f"NOTE:{esc(self.notes)}")
 
         if self.categories:
-            lines.append(f"CATEGORIES:{','.join(self.categories)}")
-        
+            lines.append(f"CATEGORIES:{','.join(esc(c) for c in self.categories)}")
+
         if self.extended_attributes:
             for k, v in self.extended_attributes.items():
-                lines.append(f"{k}:{v}")
+                lines.append(f"{k}:{esc(v)}")
 
         lines.append("END:VCARD")
-        return "\r\n".join(lines)
+        return ModelUtil.join_lines(lines)
     
     def to_webdav_string(self) -> str:
         return self.to_vcard_string()

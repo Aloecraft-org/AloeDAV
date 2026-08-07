@@ -11,34 +11,91 @@ from aloedav.model.m02_vjournal import VJOURNAL
 
 
 def parse_dt(val):
+    """
+    Parses a DATE-TIME (YYYYMMDDTHHMMSS[Z]) or a DATE (YYYYMMDD) per RFC 5545 3.3.4/3.3.5.
+
+    A trailing 'Z' yields an aware UTC datetime; without it the value is floating
+    local time and stays naive. A DATE is anchored at midnight. Values that match
+    neither form return None rather than a fabricated timestamp -- silently
+    substituting "now" turns an unparseable date into a plausible wrong one.
+    """
     from datetime import datetime, timezone
-    # rudimentary parsing for YYYYMMDDTHHMMSS[Z]
-    fmt = "%Y%m%dT%H%M%S"
-    if val.endswith("Z"):
+
+    if not val:
+        return None
+
+    val = str(val).strip()
+    is_utc = val.endswith("Z")
+    if is_utc:
         val = val[:-1]
-    try:
-        return datetime.strptime(val, fmt)
-    except ValueError:
-        return datetime.now(timezone.utc) # Fallback
+
+    for fmt in ("%Y%m%dT%H%M%S", "%Y%m%d"):
+        try:
+            parsed = datetime.strptime(val, fmt)
+        except ValueError:
+            continue
+        return parsed.replace(tzinfo=timezone.utc) if is_utc else parsed
+
+    return None
+
+def _split_unquoted(text:str, delimiter:str, maxsplit:int=-1)-> list[str]:
+    """
+    Splits on delimiters that are neither backslash-escaped nor inside a quoted
+    parameter value. RFC 5545 3.2 allows ';' and ':' inside a DQUOTE-delimited
+    parameter value, so a naive split corrupts lines like CN="Doe; Jane".
+    """
+    parts, buf, in_quote, i = [], [], False, 0
+    while i < len(text):
+        char = text[i]
+        if char == '\\' and i + 1 < len(text):
+            buf.append(char)
+            buf.append(text[i + 1])
+            i += 2
+            continue
+        if char == '"':
+            in_quote = not in_quote
+        elif char == delimiter and not in_quote and maxsplit != 0:
+            parts.append(''.join(buf))
+            buf = []
+            maxsplit -= 1
+            i += 1
+            continue
+        buf.append(char)
+        i += 1
+    parts.append(''.join(buf))
+    return parts
 
 def _decompose_line(line:str)-> tuple[str,dict,str]:
     """
     returns (key, params_dict, value)
     """
-    key_part, value = line.split(":", 1)
+    segments = _split_unquoted(line, ":", maxsplit=1)
+    key_part = segments[0]
+    value = segments[1] if len(segments) > 1 else ""
     params = {} # Extract params (KEY;PARAM=VAL:VALUE)
     if ";" in key_part:
-        parts = [e.replace("\\;", ';') for e in re.split(r'(?<!\\);', key_part)] # unescape \;
+        parts = _split_unquoted(key_part, ";")
         key = parts[0].upper()
         for p in parts[1:]:
             if "=" in p:
                 k, v = p.split("=", 1)
-                params[k.upper()] = v
+                k = k.upper()
+                v = _unquote_param(v)
+                # vCard 3.0 repeats the parameter rather than comma-joining it
+                # (TYPE=CELL;TYPE=PREF), so repeats accumulate instead of
+                # overwriting -- otherwise only the last type survives.
+                params[k] = f"{params[k]},{v}" if k in params and params[k] is not True else v
             else:
                 params[p.upper()] = True
     else:
         key = key_part.upper()
     return key, params, value
+
+def _unquote_param(value:str)-> str:
+    value = value.strip()
+    if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
+        return value[1:-1]
+    return value.replace("\\;", ";").replace("\\,", ",")
 
 def _init_data_dict(data:dict, context:str)->dict:
     if not "context" in data:
@@ -145,13 +202,13 @@ def _context_item(data:dict, key:str, params:dict, value:str)->dict:
     elif key == "PRODID": data["prod_id"] = value
     elif key == "REV": data["rev"] = value
     elif key == "UID": data["uid"] = value
-    elif key == "SUMMARY": data["summary"] = value
+    elif key == "SUMMARY": data["summary"] = ModelUtil.unescape_text(value)
     elif key == "DURATION": data["duration"] = value
-    elif key == "LOCATION": data["location"] = value
+    elif key == "LOCATION": data["location"] = ModelUtil.unescape_text(value)
     elif key == "STATUS": data["status"] = value
     elif key == "CLASS": data["classification"] = value
-    elif key == "DESCRIPTION": 
-        data["description"] = value.replace("\\n", "\n").replace("\\,", ",").replace("\\;", ";")
+    elif key == "DESCRIPTION":
+        data["description"] = ModelUtil.unescape_text(value)
     elif key == "DTSTART": data["dtstart"] = parse_dt(value)
     elif key == "DTEND": data["dtend"] = parse_dt(value)
     elif key == "DTSTAMP": data["dtstamp"] = parse_dt(value)
@@ -164,18 +221,18 @@ def _context_item(data:dict, key:str, params:dict, value:str)->dict:
     elif key == "URL": data["url"] = value
     elif key == "TRANSP": data["transparency"] = value
     elif key == "CATEGORIES":
-        data["categories"].extend(value.split(","))
+        data["categories"].extend(ModelUtil.split_escaped(value, ","))
     elif key == "ORG":
-        data["organization"] = value
+        data["organization"] = ModelUtil.unescape_text(value)
     elif key == "TITLE":
-        data["job_title"] = value
+        data["job_title"] = ModelUtil.unescape_text(value)
     elif key == "NOTE":
-        data["notes"] = value
+        data["notes"] = ModelUtil.unescape_text(value)
     elif key == "FN":
-        data["fn"] = value
+        data["fn"] = ModelUtil.unescape_text(value)
     elif key == "N":
         # Family;Given;Middle;Prefix;Suffix
-        parts = [e.replace("\\;", ';') for e in re.split(r'(?<!\\);', value)] # unescape \;
+        parts = ModelUtil.split_escaped(value, ";")
         if len(parts) >= 1: data["family_name"] = parts[0]
         if len(parts) >= 2: data["given_name"] = parts[1]
     elif key == "EMAIL":
@@ -195,8 +252,8 @@ def _context_item(data:dict, key:str, params:dict, value:str)->dict:
             "is_preferred":is_pref
         })
     elif key == "ADR":
-        # ;;Street;City;State;Zip;Country
-        parts = [e.replace("\\;", ';') for e in re.split(r'(?<!\\);', value)] # unescape \;
+        # PoBox;Ext;Street;City;State;Zip;Country
+        parts = ModelUtil.split_escaped(value, ";")
         parts.extend([""] * (7 - len(parts))) # Ensure length
         
         addr_type = None

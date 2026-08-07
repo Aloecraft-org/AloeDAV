@@ -4,6 +4,8 @@ from os import path
 from datetime import datetime
 from pydantic import BaseModel
 from logging import info, error
+from urllib.parse import quote, unquote
+from xml.sax.saxutils import escape as xml_escape
 
 from aloedav.exceptions import AuthenticationError, ResourceNotFound, PreconditionFailed, WebDAVError, AloeDAVClientError
 from aloedav.client_util import get_multistatus_responses
@@ -61,9 +63,69 @@ class AloeDAVClient(BaseAloeDAVClient):
         self.request_timeout = request_timeout
         self.allow_delete_collection = allow_delete_collection
 
+    def _url(self, *segments) -> str:
+        """
+        Builds a request URL from path segments.
+
+        os.path.join is not safe here: it is platform dependent, it discards
+        everything to the left of a segment that starts with '/', and it leaves
+        reserved characters unencoded so that a UID containing '#' or a space
+        silently addresses the wrong resource.
+        """
+        encoded = [quote(str(s).strip("/"), safe="") for s in segments if s not in (None, "")]
+        return "/".join([self.host.rstrip("/")] + encoded)
+
+    def _request(self, method, url, body=None, headers=None) -> requests.Response:
+        """
+        Issues a request with the client's credentials and timeout. Every call
+        goes through here so that no request can be left unbounded.
+        """
+        return requests.request(
+            method, url, data=body, headers=headers,
+            auth=(self.username, self.password),
+            timeout=self.request_timeout)
+
+    def _multistatus(self, response, context, namespaces=None) -> dict:
+        """
+        Validates a 207 Multi-Status response and parses its body.
+
+        A non-207 must not fall through to the parser: an error page yields no
+        <multistatus> element, which would otherwise be reported as an empty
+        collection and make a rejected request indistinguishable from an
+        account with nothing in it.
+        """
+        if response.status_code == 401:
+            raise AuthenticationError(f"Authentication failed for {context}", response.status_code, response.text)
+        elif response.status_code == 404:
+            raise ResourceNotFound(f"Not found: {context}", response.status_code, response.text)
+        elif response.status_code != 207:
+            raise WebDAVError(f"{context} failed: {response.status_code}", response.status_code, response.text)
+
+        return xmltodict.parse(
+            response.content, process_namespaces=True,
+            namespaces=NS_MAP if namespaces is None else namespaces)
+
+    def _extract_objects(self, doc, data_key) -> list[Item]:
+        """
+        Collects the parsed objects out of a REPORT Multi-Status body.
+
+        The propstat carrying the data is the one with a 200 status; a response
+        may also carry a 404 propstat for properties the server does not hold,
+        and picking that one blindly loses the entry.
+        """
+        results = []
+        for r in get_multistatus_responses(doc):
+            props = get_ok_propfind(r)
+            data = props.get(data_key)
+            if not data:
+                continue
+            etag = (props.get('getetag') or '').strip('"')
+            results.extend(to_model(data, etag))
+        return results
+
     def _create(self, method, url, body=None) -> bool:
         TAG="[AloeDAVClient._create]"
-        response = requests.request(method, url, data=body, auth=(self.username, self.password), timeout=self.request_timeout)
+        response = self._request(method, url, body)
         
         if response.status_code in [201, 200]:
             # Success
@@ -85,13 +147,13 @@ class AloeDAVClient(BaseAloeDAVClient):
             raise WebDAVError(f"Create Collection Failed: {response.status_code}", response.status_code, response.text)
 
     def create_addressbook(self, display_name, description, addressbook_id) -> bool:
-        url = path.join(self.host, self.username, addressbook_id)
+        url = self._url(self.username, addressbook_id)
         body=f"""<?xml version="1.0" encoding="UTF-8" ?>
 <D:mkcol xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
   <D:set>
     <D:prop>
-      <D:displayname>{display_name}</D:displayname>
-      <C:addressbook-description>{description}</C:addressbook-description>
+      <D:displayname>{xml_escape(display_name or "")}</D:displayname>
+      <C:addressbook-description>{xml_escape(description or "")}</C:addressbook-description>
       <D:resourcetype>
         <D:collection/>
         <C:addressbook/>
@@ -102,13 +164,13 @@ class AloeDAVClient(BaseAloeDAVClient):
         return self._create("MKCOL", url, body)
     
     def create_calendar(self, display_name, description, calendar_id, components:CalendarComponents=CalendarComponents.VEVENT|CalendarComponents.VTODO|CalendarComponents.VJOURNAL)  -> bool:
-        url = path.join(self.host, self.username, calendar_id)
+        url = self._url(self.username, calendar_id)
         body=f"""<?xml version="1.0" encoding="UTF-8" ?>
 <D:mkcalendar xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
   <D:set>
     <D:prop>
-      <D:displayname>{display_name}</D:displayname>
-      <C:calendar-description>{description}</C:calendar-description>
+      <D:displayname>{xml_escape(display_name or "")}</D:displayname>
+      <C:calendar-description>{xml_escape(description or "")}</C:calendar-description>
       <C:supported-calendar-component-set>{
 ("        <C:comp name=\"VEVENT\"/>\n" if CalendarComponents.VEVENT in components else "") + \
 ("        <C:comp name=\"VTODO\"/>\n" if CalendarComponents.VTODO in components else "") + \
@@ -122,7 +184,7 @@ class AloeDAVClient(BaseAloeDAVClient):
         return self._create("MKCALENDAR", url,body)
 
     def list_collections(self) -> list[DAVCollection]:
-        url = path.join(self.host, self.username)
+        url = self._url(self.username)
         body = f"""<?xml version="1.0" encoding="utf-8" ?>
 <D:propfind {NS}>
 <D:prop>
@@ -138,12 +200,12 @@ class AloeDAVClient(BaseAloeDAVClient):
 </D:prop>
 </D:propfind>"""
         
-        response = requests.request("PROPFIND", url, data=body, headers={"Depth": "1"}, auth=(self.username, self.password), timeout=self.request_timeout)
-        doc = xmltodict.parse(response.content, process_namespaces=True, namespaces=NS_MAP)
+        response = self._request("PROPFIND", url, body, headers={"Depth": "1"})
+        doc = self._multistatus(response, "List collections")
         return [DAVCollection.from_response(r) for r in get_multistatus_responses(doc) if get_collection_type(get_ok_propfind(r))]
     
     def fetch_collection(self, collection_id: str) -> DAVCollection:
-        url = path.join(self.host, self.username, collection_id)
+        url = self._url(self.username, collection_id)
         body = f"""<?xml version="1.0" encoding="utf-8" ?>
 <D:propfind {NS}>
     <D:prop>
@@ -159,15 +221,9 @@ class AloeDAVClient(BaseAloeDAVClient):
     </D:prop>
 </D:propfind>"""
         
-        response = requests.request("PROPFIND", url, data=body, headers={"Depth": "0"}, auth=(self.username, self.password), timeout=self.request_timeout)
-        
-        if response.status_code == 404:
-            raise ResourceNotFound(f"Collection not found: {collection_id}", response.status_code)
-        elif response.status_code != 207:
-            return None
-
-        doc = xmltodict.parse(response.content, process_namespaces=True, namespaces=NS_MAP)
-        return next(DAVCollection.from_response(r) for r in get_multistatus_responses(doc))
+        response = self._request("PROPFIND", url, body, headers={"Depth": "0"})
+        doc = self._multistatus(response, f"Collection {collection_id}")
+        return next((DAVCollection.from_response(r) for r in get_multistatus_responses(doc)), None)
     
     def sync_collection(self, collection_id: str, sync_token: str) -> dict:
         """
@@ -175,44 +231,37 @@ class AloeDAVClient(BaseAloeDAVClient):
         Returns: (updated_items, deleted_hrefs, new_sync_token)
         updated_items is a list of dicts: {'href': str, 'etag': str}
         """
-        url = path.join(self.host, self.username, collection_id)
+        url = self._url(self.username, collection_id)
         
+        # An absent token means "initial sync": the element must be empty rather
+        # than carry the literal string "None".
         body = f"""<?xml version="1.0" encoding="utf-8" ?>
 <D:sync-collection xmlns:D="DAV:">
-    <D:sync-token>{sync_token}</D:sync-token>
+    <D:sync-token>{xml_escape(sync_token) if sync_token else ""}</D:sync-token>
     <D:sync-level>1</D:sync-level>
     <D:prop>
         <D:getetag/>
     </D:prop>
 </D:sync-collection>"""
 
-        response = requests.request("REPORT", url, data=body, auth=(self.username, self.password))
-        
-        if response.status_code == 404:
-            raise ResourceNotFound(f"Collection not found: {collection_id}", response.status_code)
-        elif response.status_code != 207:
-            raise WebDAVError(f"Sync failed: {response.status_code}", response.status_code, response.text)
-
-        doc = xmltodict.parse(response.content, process_namespaces=True, namespaces={'DAV:': None})
+        response = self._request("REPORT", url, body)
+        doc = self._multistatus(response, f"Sync {collection_id}", namespaces={'DAV:': None})
         new_token = doc.get('multistatus', {}).get('sync-token', None)
         responses = get_multistatus_responses(doc)
-        if isinstance(responses, dict): responses = [responses]
-        
+
         updated = []
         deleted = []
-        
+
         for r in responses:
-            href = get_href(r)
+            href = unquote(get_href(r))
             status = r.get('status')
             file_dir, file_name = path.split(href)
             uid = path.splitext(file_name)[0]
-            
+
             if status and '404' in status:
                 deleted.append({'href':href, 'uid': uid, 'file_name':file_name})
             else:
-                propstat = r.get('propstat', {})
-                if isinstance(propstat, list): propstat = propstat[0]
-                etag = propstat.get('prop', {}).get('getetag',"").strip('"')
+                etag = (get_ok_propfind(r).get('getetag') or "").strip('"')
                 updated.append({'href': href, 'etag': etag, 'uid':uid, 'file_name': file_name})
                 
         return {
@@ -222,10 +271,7 @@ class AloeDAVClient(BaseAloeDAVClient):
         }
     
     def fetch_object(self, collection_id, filename) -> list[Item]:
-        response = requests.get(
-            url=path.join(self.host, self.username, collection_id, filename), 
-            auth=(self.username, self.password), 
-            timeout=self.request_timeout)
+        response = self._request("GET", self._url(self.username, collection_id, filename))
         if response.status_code == 200:
             return to_model(response.text, response.headers.get("ETag", None))
         elif response.status_code == 404:
@@ -240,11 +286,9 @@ class AloeDAVClient(BaseAloeDAVClient):
         if etag:
             headers["If-Match"] = f'"{etag}"' if not etag.startswith('"') else etag
             
-        response = requests.put(
-            url=path.join(self.host, self.username, collection_id, filename),
-            data=webdav_data.encode('utf-8'), 
-            headers=headers, auth=(self.username, self.password),
-            timeout=self.request_timeout)
+        response = self._request(
+            "PUT", self._url(self.username, collection_id, filename),
+            body=webdav_data.encode('utf-8'), headers=headers)
 
         if response.status_code in [200, 201, 204]:
             etag = response.headers.get("ETag", "").strip('"')
@@ -256,13 +300,13 @@ class AloeDAVClient(BaseAloeDAVClient):
             raise WebDAVError(f"Failed to upsert object: {response.status_code}", response.status_code, response.text)
 
     def delete_object(self, collection_id, filename, etag=None)->bool:
-        url = path.join(self.host, self.username, collection_id, filename)
+        url = self._url(self.username, collection_id, filename)
         headers = {}
         if etag:
             # WebDAV requires quoted ETags in If-Match, even if we strip them internally
             headers["If-Match"] = f'"{etag}"' if not etag.startswith('"') else etag
         
-        response = requests.delete(url, headers=headers, auth=(self.username, self.password), timeout=self.request_timeout)
+        response = self._request("DELETE", url, headers=headers)
         
         if response.status_code in [200, 204]:
             return True
@@ -277,10 +321,10 @@ class AloeDAVClient(BaseAloeDAVClient):
         if not self.allow_delete_collection:
             raise AloeDAVClientError("AloeDAVClient must be created with allow_delete_collection to allow deleting collections")
         
-        url = path.join(self.host, self.username, collection_id)
+        url = self._url(self.username, collection_id)
         headers = {}
         
-        response = requests.delete(url, headers=headers, auth=(self.username, self.password), timeout=self.request_timeout)
+        response = self._request("DELETE", url, headers=headers)
         
         if response.status_code in [200, 204]:
             return True
@@ -291,7 +335,7 @@ class AloeDAVClient(BaseAloeDAVClient):
 
 
     def list_calendar_objects(self, calendar_id, start: datetime = None, end: datetime = None)-> list[Item]:
-        url = path.join(self.host, self.username, calendar_id)
+        url = self._url(self.username, calendar_id)
         
         time_range_xml = ""
         if start and end:
@@ -321,29 +365,15 @@ class AloeDAVClient(BaseAloeDAVClient):
     </C:filter>
 </C:calendar-query>"""
  
-        response = requests.request("REPORT", url, data=body, headers={"Depth": "1"}, auth=(self.username, self.password))
-        
-        # Parse XML and handle xmltodict's list/dict behavior for single vs multiple results
-        doc = xmltodict.parse(response.content, process_namespaces=True, namespaces={'DAV:': None})
-        responses = doc.get('multistatus', {}).get('response', [])
-        if isinstance(responses, dict): responses = [responses]
-        
-        results = []
-        for r in responses:
-            propstat = r.get('propstat', {})
-            if isinstance(propstat, list): propstat = propstat[0]
-            props = propstat.get('prop', {})
-            cal_data = props.get('calendar-data')
-            etag = props.get('getetag', '').strip('"')
-            item = to_model(cal_data, etag)
-            results.extend(item)
-        return results
+        response = self._request("REPORT", url, body, headers={"Depth": "1"})
+        doc = self._multistatus(response, f"List objects in {calendar_id}", namespaces={'DAV:': None})
+        return self._extract_objects(doc, 'calendar-data')
 
     def list_addressbook_objects(self, addressbook_id)-> list[VCARD]:
         """
         Lists all vCards in a specific addressbook.
         """
-        url = path.join(self.host, self.username, addressbook_id)
+        url = self._url(self.username, addressbook_id)
         body = """<?xml version="1.0" encoding="utf-8" ?>
 <C:addressbook-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
     <D:prop>
@@ -352,19 +382,6 @@ class AloeDAVClient(BaseAloeDAVClient):
     </D:prop>
 </C:addressbook-query>"""
  
-        response = requests.request("REPORT", url, data=body, headers={"Depth": "1"}, auth=(self.username, self.password))
-        
-        doc = xmltodict.parse(response.content, process_namespaces=True, namespaces={'DAV:': None})
-        responses = doc.get('multistatus', {}).get('response', [])
-        if isinstance(responses, dict): responses = [responses]
- 
-        results = []
-        for r in responses:
-            propstat = r.get('propstat', {})
-            if isinstance(propstat, list): propstat = propstat[0]
-            props = propstat.get('prop', {})
-            card_data = props.get('address-data')
-            etag = props.get('getetag', '').strip('"')
-            item = to_model(card_data, etag)
-            results.extend(item)
-        return results
+        response = self._request("REPORT", url, body, headers={"Depth": "1"})
+        doc = self._multistatus(response, f"List objects in {addressbook_id}", namespaces={'DAV:': None})
+        return self._extract_objects(doc, 'address-data')

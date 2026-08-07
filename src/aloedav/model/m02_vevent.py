@@ -43,37 +43,37 @@ class VEVENT(CalendarItem):
     def to_vevent_string(self) -> str:
         from uuid import uuid4
         from datetime import datetime, timezone
-        lines = ["BEGIN:VEVENT"]
 
-        def format_dt(dt: datetime) -> str:
-            # iCalendar format: YYYYMMDDTHHMMSS
-            # Note: For robust timezone handling, you would normally check for 
-            # tzinfo and append 'Z' for UTC. Here we assume naive = local/floating.
-            return dt.strftime("%Y%m%dT%H%M%S")
+        esc = ModelUtil.escape_text
+        param = ModelUtil.escape_param
+        format_dt = ModelUtil.format_dt
+
+        lines = ["BEGIN:VEVENT"]
 
         # --- Core Properties ---
         # Ensure UID exists
         if not self.uid:
             self.uid = f"event-{uuid4()}"
-        lines.append(f"UID:{self.uid}")
+        lines.append(f"UID:{esc(self.uid)}")
 
         lines.append(f"DTSTAMP:{format_dt(self.dtstamp)}")
-        lines.append(f"DTSTART:{format_dt(self.dtstart)}")
-        
+        if self.dtstart:
+            lines.append(f"DTSTART:{format_dt(self.dtstart)}")
+
         if self.dtend:
             lines.append(f"DTEND:{format_dt(self.dtend)}")
         elif self.duration:
             lines.append(f"DURATION:{self.duration}")
 
-        lines.append(f"SUMMARY:{self.summary}")
-        
+        lines.append(f"SUMMARY:{esc(self.summary)}")
+
         if self.description:
-            lines.append(f"DESCRIPTION:{self.description}")
+            lines.append(f"DESCRIPTION:{esc(self.description)}")
         if self.location:
-            lines.append(f"LOCATION:{self.location}")
+            lines.append(f"LOCATION:{esc(self.location)}")
         if self.url:
-            lines.append(f"URL:{self.url}")
-            
+            lines.append(f"URL:{esc(self.url)}")
+
         # Ensure Enum values are serialized, not the Enum object repr
         lines.append(f"STATUS:{self.status.value if hasattr(self.status, 'value') else self.status}")
         lines.append(f"CLASS:{self.classification.value if hasattr(self.classification, 'value') else self.classification}")
@@ -82,26 +82,26 @@ class VEVENT(CalendarItem):
         lines.append(f"PRIORITY:{self.priority}")
         
         if self.categories:
-            lines.append(f"CATEGORIES:{','.join(self.categories)}")
-            
+            lines.append(f"CATEGORIES:{','.join(esc(c) for c in self.categories)}")
+
         if self.extended_attributes:
             for k, v in self.extended_attributes.items():
-                lines.append(f"{k}:{v}")            
+                lines.append(f"{k}:{esc(v)}")
 
         # --- Organizer ---
         if self.organizer_email:
-            cn_param = f";CN={self.organizer_name}" if self.organizer_name else ""
+            cn_param = f";CN={param(self.organizer_name)}" if self.organizer_name else ""
             lines.append(f"ORGANIZER{cn_param}:mailto:{self.organizer_email}")
 
         # --- Attendees ---
         if self.attendees:
             for attendee in self.attendees:
                 params = []
-                params.append(f"ROLE={attendee.role}")
-                params.append(f"PARTSTAT={attendee.participation_status}")
+                params.append(f"ROLE={param(attendee.role)}")
+                params.append(f"PARTSTAT={param(attendee.participation_status)}")
                 if attendee.name:
-                    params.append(f"CN={attendee.name}")
-                
+                    params.append(f"CN={param(attendee.name)}")
+
                 lines.append(f"ATTENDEE;{';'.join(params)}:mailto:{attendee.email}")
 
         # --- Attachments ---
@@ -143,29 +143,31 @@ class VEVENT(CalendarItem):
         # --- Alarms (VALARM) ---
         if self.alarms:
             for alarm in self.alarms:
-                lines.append(f"""BEGIN:VALARM
-ACTION:{alarm.action}
-TRIGGER:-PT{alarm.trigger_minutes}M
-DESCRIPTION:{alarm.description if alarm.description else (self.summary or "Journal Reminder")}
-END:VALARM""")
+                lines.extend([
+                    "BEGIN:VALARM",
+                    f"ACTION:{alarm.action}",
+                    f"TRIGGER:-PT{alarm.trigger_minutes}M",
+                    f"DESCRIPTION:{esc(alarm.description or self.summary or 'Reminder')}",
+                    "END:VALARM",
+                ])
 
         lines.append("END:VEVENT")
-        
-        return "\r\n".join(lines)
+
+        return ModelUtil.join_lines(lines)
 
     def to_vcalendar_string(self) -> str:
         """
         Serializes the event into a valid iCalendar (ICS) string.
         """
-        lines = [f"""
-BEGIN:VCALENDAR
-VERSION:{self.version}
-PRODID:{self.prod_id}"""]
+        lines = [
+            "BEGIN:VCALENDAR",
+            f"VERSION:{self.version}",
+            f"PRODID:{ModelUtil.escape_text(self.prod_id)}",
+            self.to_vevent_string(),
+            "END:VCALENDAR",
+        ]
 
-        lines.append(self.to_vevent_string())
-        lines.append("END:VCALENDAR")
-
-        return "\r\n".join(lines)
+        return ModelUtil.join_lines(lines)
 
     def to_webdav_string(self) -> str:
         return self.to_vcalendar_string()
