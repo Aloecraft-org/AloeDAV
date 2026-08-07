@@ -217,6 +217,10 @@ def _context_item(data:dict, key:str, params:dict, value:str, line:str=None)->di
         data["description"] = ModelUtil.unescape_text(value)
     elif key == "DTSTART": data["dtstart"] = parse_dt(value)
     elif key == "DTEND": data["dtend"] = parse_dt(value)
+    # Identifies this component as an override of one instance of a recurring
+    # series rather than the series master. Without it the two are
+    # indistinguishable and collide on filename.
+    elif key == "RECURRENCE-ID": data["recurrence_id"] = parse_dt(value)
     elif key == "DTSTAMP": data["dtstamp"] = parse_dt(value)
     elif key == "DUE": data["due"] = parse_dt(value)
     elif key == "COMPLETED": data["completed"] = parse_dt(value)
@@ -436,6 +440,50 @@ def webdav_data(contents:str)->dict:
     return context[0]
 
 _ITEM_MODELS = {"VEVENT": VEVENT, "VTODO": VTODO, "VJOURNAL": VJOURNAL}
+
+def to_resource(data, etag:str=None):
+    """
+    Parses one WebDAV resource into the unit the protocol actually moves.
+
+    Unlike to_model, this keeps a VCALENDAR's components together, so a
+    recurring master and its RECURRENCE-ID overrides survive as one resource
+    with one filename instead of colliding and overwriting each other.
+    """
+    from aloedav.model.m01_resource import VCalendarResource, VCardResource
+
+    data_dict = data if isinstance(data, dict) else webdav_data(data)
+    content = data_dict["content"]
+    raw = data_dict.get("raw_contents")
+
+    if content["context"] == "VCARD":
+        card = VCARD(**content)
+        card.raw_contents = raw
+        if etag:
+            card.etag = etag
+        return VCardResource(card=card, etag=etag, raw_contents=raw)
+
+    elif content["context"] == "VCALENDAR":
+        components = []
+        for item in content["items"]:
+            model = _ITEM_MODELS.get(item["context"])
+            if model is None:
+                raise ParseError(f"Unknown element type: {item['context']}")
+            component = model(**item)
+            component.raw_contents = raw
+            if etag:
+                component.etag = etag
+            components.append(component)
+
+        return VCalendarResource(
+            version=content.get("version", "2.0"),
+            prod_id=content.get("prod_id") or "-//aloecraft.org//AloeDAV 1.0//EN",
+            components=components,
+            calendar_properties=content.get("unknown_properties", []),
+            calendar_components=content.get("unknown_components", []),
+            etag=etag,
+            raw_contents=raw)
+
+    raise ParseError(f"Unknown element type: {content['context']}")
 
 def to_model(data, etag:str=None)->list[VCARD|VTODO|VJOURNAL|VEVENT]:
     data_dict = data if isinstance(data, dict) else webdav_data(data)

@@ -36,14 +36,14 @@ Two corollaries that govern design decisions below:
 | Phase | State |
 |---|---|
 | 0. Correctness floor | **Done** — `38ebfe8` |
-| 1. Fidelity | **In progress** — `a7280f6` landed the parser half |
+| 1. Fidelity | **In progress** — parser (`a7280f6`) and resource model landed; VALARM/ATTACH/vCard structured values remain |
 | 2. Time | Not started |
 | 3. Agent ergonomics | Not started |
 | 4. Protocol completeness (client) | Not started |
 | 5. Server | Not started |
 | 6. Breadth | Not started |
 
-Test count: 13 → 81.
+Test count: 13 → 100.
 
 ---
 
@@ -80,13 +80,15 @@ five methods that could not execute. Details in the commit message. Summary:
 
 ### Remaining
 
-- [ ] **The resource model.** A CalDAV resource is a VCALENDAR that may hold several
-      components sharing a UID — a recurring master plus `RECURRENCE-ID` overrides.
-      `to_model` flattens to one model per component, so both collide on `{uid}.ics` and
-      serializing either destroys the sibling. `EXDATE`/`RDATE`/`RECURRENCE-ID` are not
-      modelled at all. **This is the highest-consequence remaining defect**: an agent that
-      touches any recurring event with an exception destroys the series. *Design decision
-      open — see below.* **Effort: L**
+- [x] **The resource model.** `VCalendarResource`/`VCardResource` in `m01_resource.py` are
+      now the unit of GET/PUT/ETag/filename, so a recurring master and its `RECURRENCE-ID`
+      overrides share one resource instead of colliding on `{uid}.ics` and overwriting each
+      other. `RECURRENCE-ID` is parsed (it was not, so master and override were
+      indistinguishable) and serialized by VEVENT/VTODO as well as VJOURNAL. `to_model()`
+      still returns `list[Item]` as a compatibility view; `to_resource()` and
+      `client.fetch_resource()` are the safe path when the result will be written back.
+      `EXDATE`/`RDATE` round-trip verbatim via the Phase 1 preservation path; they still
+      need modelling for Phase 2 expansion.
 - [ ] **`VALARM` fidelity.** Only relative negative triggers (`-PT15M`) survive. No absolute
       triggers, no positive offsets, no `REPEAT`/`DURATION`, no `ATTENDEE` on EMAIL alarms,
       no `RELATED=END`. Alarms are the thing users notice losing. **Effort: M**
@@ -196,17 +198,15 @@ and ACL? The former is a fraction of the work.
 
 These need a call before the work they gate can start.
 
-### D1 — Resource model (gates Phase 1, and Phase 5's storage layer)
+### D1 — Resource model — **decided: wrapper + compatibility shim** ✅
 
-How to represent a VCALENDAR holding a recurring master plus its `RECURRENCE-ID` overrides.
-Three candidates:
+Implemented. The deciding evidence against "master owns its overrides" was `TEST_VCALENDAR_MIXED`,
+which carries two UIDs and two component types in one VCALENDAR — non-conformant as a CalDAV
+resource (RFC 4791 4.1) but valid as an `.ics` file, and a client must read it rather than
+reject it. A master-owns model cannot represent it; a resource wrapper can.
 
-- **Wrapper** — a new `VCalendarResource` owning `list[Item]`, becoming the unit of GET/PUT.
-- **Master-owns** — `VEVENT.overrides: list[VEVENT]`; `to_model` returns one model per UID.
-- **Raw-preserving** — model the component tree *plus* the original lines, and patch the tree
-  rather than regenerate it, guaranteeing byte-level preservation.
-
-*Being evaluated by a design panel; recommendation to follow.*
+Revisit if the extra indirection proves annoying in practice — `to_model()` was kept as the
+flat view specifically so the wrapper can stay out of the way for single-component resources.
 
 ### D2 — Date-time representation (gates Phase 2)
 

@@ -12,7 +12,7 @@ from aloedav.client_util import get_multistatus_responses
 from aloedav.client_util import get_ok_propfind
 from aloedav.client_util import get_collection_type
 from aloedav.client_util import get_href
-from aloedav.model.serial_util import to_model, webdav_data
+from aloedav.model.serial_util import to_model, to_resource, webdav_data
 from aloedav.model.m00_constant import NS, NS_MAP, CalendarComponents
 from aloedav.model.m01_base import Item
 from aloedav.model.m01_collection import DAVCollection
@@ -279,7 +279,27 @@ class AloeDAVClient(BaseAloeDAVClient):
         else:
             raise WebDAVError(f"Failed to retrieve object: {response.status_code}", response.status_code, response.text)
 
-    def upsert_object(self, collection_id, webdav_obj: Item, etag=None) -> Item:
+    def fetch_resource(self, collection_id, filename):
+        """
+        Fetches one resource whole, keeping a recurring master and its
+        RECURRENCE-ID overrides together. Prefer this over fetch_object when
+        the result will be written back: fetch_object returns the components
+        individually, and writing one back drops its siblings.
+        """
+        response = self._request("GET", self._url(self.username, collection_id, filename))
+        if response.status_code == 200:
+            return to_resource(response.text, response.headers.get("ETag", "").strip('"') or None)
+        elif response.status_code == 404:
+            raise ResourceNotFound(f"Object not found: {collection_id}/{filename}", response.status_code)
+        else:
+            raise WebDAVError(f"Failed to retrieve object: {response.status_code}", response.status_code, response.text)
+
+    def upsert_object(self, collection_id, webdav_obj, etag=None):
+        """
+        Writes one resource. Accepts either a Resource or a bare Item; both
+        expose filename()/content_type/to_webdav_string(), and a Resource is
+        the safer input because it carries every component of the resource.
+        """
         webdav_data = webdav_obj.to_webdav_string()
         filename = webdav_obj.filename()
         headers = {"Content-Type": webdav_obj.content_type}

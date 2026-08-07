@@ -142,5 +142,9 @@ class VJOURNAL(CalendarItem):
 
         return ModelUtil.join_lines(lines)
 
+    def to_component_string(self) -> str:
+        """This component alone, without the VCALENDAR wrapper."""
+        return self.to_vjournal_string()
+
     def to_webdav_string(self) -> str:
         return self.to_vcalendar_string()

@@ -122,6 +122,10 @@ class VTODO(CalendarItem):
                 # If you needed to handle inline data, you'd base64 encode it here, 
                 # but that significantly increases file size.
 
+        # --- Recurrence ID (marks this as an override of one instance) ---
+        if self.recurrence_id:
+            lines.append(f"RECURRENCE-ID:{format_dt(self.recurrence_id)}")
+
         # --- Recurrence Rule (RRULE) ---
         if self.recurrence_rule:
             lines.append(f"RRULE:{self.recurrence_rule.to_rrule_string()}")
@@ -158,6 +162,10 @@ class VTODO(CalendarItem):
         ]
 
         return ModelUtil.join_lines(lines)
+
+    def to_component_string(self) -> str:
+        """This component alone, without the VCALENDAR wrapper."""
+        return self.to_vtodo_string()
 
     def to_webdav_string(self) -> str:
         return self.to_vcalendar_string()

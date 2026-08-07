@@ -227,3 +227,9 @@ class CalendarItem(Item):
             self.attachments = update.attachments
 
         self.dtstamp = datetime.now(timezone.utc)
+    @abstractmethod
+    def to_component_string(self) -> str:
+        """
+        This component alone, without its VCALENDAR wrapper, so a resource can
+        assemble several components into one body.
+        """
