@@ -16,6 +16,11 @@ class AlarmAction(StrEnum):
     PROCEDURE = "PROCEDURE"
 
 class RecurrenceFrequency(StrEnum):
+    # All seven values of RFC 5545 3.3.10. The sub-daily ones are rare in
+    # calendars but valid, and omitting them makes the whole event unparseable.
+    SECONDLY = "SECONDLY"
+    MINUTELY = "MINUTELY"
+    HOURLY = "HOURLY"
     DAILY = "DAILY"
     WEEKLY = "WEEKLY"
     MONTHLY = "MONTHLY"

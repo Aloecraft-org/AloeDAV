@@ -1,5 +1,5 @@
 import re
-from aloedav.exceptions import PreconditionFailed, WebDAVError, AuthenticationError, ResourceNotFound, AloeDAVClientError
+from aloedav.exceptions import PreconditionFailed, WebDAVError, AuthenticationError, ResourceNotFound, AloeDAVClientError, ParseError
 from aloedav.model.m00_constant import EventStatus, Transparency
 from aloedav.model.m00_constant import PhoneType, AddressType
 # from aloedav.model.m01_base import Address, Phone, Attendee, RecurrenceRule, Attachment
@@ -100,10 +100,16 @@ def _unquote_param(value:str)-> str:
 def _init_data_dict(data:dict, context:str)->dict:
     if not "context" in data:
         data["context"] = context
-    assert data["context"] == context, f"_init_data_dict for {context} (context is: {data["context"]})"
+    if data["context"] != context:
+        raise ParseError(f"_init_data_dict for {context} (context is: {data['context']})")
 
-    if not "unknown_attributes" in data:
-        data["unknown_attributes"] = []
+    # Properties and sub-components this parser does not model are kept as the
+    # verbatim unfolded source lines. Round-tripping them untouched is the only
+    # way an editing client can avoid destroying data written by another one.
+    if not "unknown_properties" in data:
+        data["unknown_properties"] = []
+    if not "unknown_components" in data:
+        data["unknown_components"] = []
 
     match context:
         case "ROOT":
@@ -178,12 +184,12 @@ def _init_data_dict(data:dict, context:str)->dict:
                 data["trigger_minutes"] = 15
     return data
 
-def _context_alarm(data:dict, key:str, params:dict, value:str)->dict:
+def _context_alarm(data:dict, key:str, params:dict, value:str, line:str=None)->dict:
     match key:
         case "ACTION":
             data["action"] = value
         case "DESCRIPTION":
-            data["description"] = value
+            data["description"] = ModelUtil.unescape_text(value)
         case "TRIGGER":
             # Simple parse for standard -PT15M format
             # Removes P, T, M, and - characters to get raw minutes
@@ -191,12 +197,12 @@ def _context_alarm(data:dict, key:str, params:dict, value:str)->dict:
             if val_clean:
                 data["trigger_minutes"] = int(val_clean)
         case _:
-            data["unknown_attributes"].append((key, params, value))
+            data["unknown_properties"].append(line if line is not None else f"{key}:{value}")
     return data
 
-def _context_item(data:dict, key:str, params:dict, value:str)->dict:
+def _context_item(data:dict, key:str, params:dict, value:str, line:str=None)->dict:
     if key.startswith("X-"):
-        data["extended_attributes"][key] = value
+        data["extended_attributes"][key] = ModelUtil.unescape_text(value)
 
     elif key == "VERSION": data["version"] = value
     elif key == "PRODID": data["prod_id"] = value
@@ -288,15 +294,38 @@ def _context_item(data:dict, key:str, params:dict, value:str)->dict:
             "participation_status":partstat
         })
     elif key == "RRULE":
-        r_parts = value.split(";")
-        r_data = {}
-        for rp in r_parts:
-            if "=" not in rp: continue
-            k, v = rp.split("=")
-            if k == "FREQ": r_data["frequency"] = v
-            elif k == "INTERVAL": r_data["interval"] = int(v)
-            elif k == "COUNT": r_data["count"] = int(v)
-            elif k == "UNTIL": r_data["until"] = parse_dt(v)
+        from aloedav.model.m01_base import RecurrenceRule
+        # Integer-valued BY* parts; BYDAY is textual ("MO", "-1SU") and WKST is
+        # a bare weekday, so neither is coerced.
+        int_lists = {"by_second", "by_minute", "by_hour", "by_month_day",
+                     "by_year_day", "by_week_no", "by_month", "by_set_pos"}
+        fields = RecurrenceRule.part_names()
+        r_data = {"unknown_parts": []}
+        for rp in value.split(";"):
+            if "=" not in rp:
+                continue
+            k, v = rp.split("=", 1)
+            field = fields.get(k.upper())
+            if field is None:
+                r_data["unknown_parts"].append(rp)
+            elif field == "frequency":
+                r_data["frequency"] = v
+            elif field == "until":
+                r_data["until"] = parse_dt(v)
+            elif field in ("count", "interval"):
+                try:
+                    r_data[field] = int(v)
+                except ValueError:
+                    r_data["unknown_parts"].append(rp)
+            elif field == "by_day":
+                r_data[field] = v.split(",")
+            elif field == "week_start":
+                r_data[field] = v
+            elif field in int_lists:
+                try:
+                    r_data[field] = [int(x) for x in v.split(",")]
+                except ValueError:
+                    r_data["unknown_parts"].append(rp)
         if "frequency" in r_data:
             data["recurrence_rule"] = r_data
     elif key == "ATTACH":
@@ -311,7 +340,27 @@ def _context_item(data:dict, key:str, params:dict, value:str)->dict:
             "mime_type":mime,
             "url":value
         })
+    else:
+        # Anything this parser does not model is preserved verbatim. Without
+        # this branch an edit-and-write cycle silently strips every property
+        # the model happens not to know -- CREATED, GEO, RELATED-TO and so on.
+        data["unknown_properties"].append(line if line is not None else f"{key}:{value}")
     return data
+
+# Components this parser models. Anything else (VTIMEZONE and its nested
+# STANDARD/DAYLIGHT, VFREEBUSY, VAVAILABILITY, X- components) is captured
+# verbatim rather than rejected -- an unrecognised component is a component we
+# must hand back untouched, not a parse failure.
+_KNOWN_COMPONENTS = {
+    "VCALENDAR": ("ROOT",),
+    "VCARD": ("ROOT",),
+    "VEVENT": ("VCALENDAR",),
+    "VTODO": ("VCALENDAR",),
+    "VJOURNAL": ("VCALENDAR",),
+    "VALARM": ("VEVENT", "VTODO", "VJOURNAL"),
+}
+
+_ITEM_COMPONENTS = ("VEVENT", "VTODO", "VJOURNAL")
 
 def webdav_data(contents:str)->dict:
     from aloedav.model.m01_base import VCalendar, Alarm, Attendee, RecurrenceRule, Attachment
@@ -321,87 +370,106 @@ def webdav_data(contents:str)->dict:
 
     context[0]["raw_contents"] = contents
 
+    # Set while collecting an unmodelled component; its lines are buffered
+    # verbatim (BEGIN and END included) and nesting is tracked by depth so an
+    # inner BEGIN cannot terminate the outer block early.
+    capture = None
+
     for line in lines:
-        current_context = context[-1]
         if ":" not in line: continue
         key, params, value = _decompose_line(line)
-        
-        if key == "BEGIN":
-            if value == "VCALENDAR":
-                assert current_context["context"] == "ROOT", "VCALENDAR must be ROOT element"
-                context.append(_init_data_dict({}, "VCALENDAR"))
-            elif value == "VCARD":
-                assert current_context["context"] == "ROOT", "VCARD must be ROOT element"
-                context.append(_init_data_dict({}, "VCARD"))
-            elif value == "VTODO":
-                assert current_context["context"] == "VCALENDAR", "VTODO must be embedded in VCALENDAR"
-                context.append(_init_data_dict({}, "VTODO"))
-            elif value == "VEVENT":
-                assert current_context["context"] == "VCALENDAR", "VEVENT must be embedded in VCALENDAR"
-                context.append(_init_data_dict({}, "VEVENT"))
-            elif value == "VJOURNAL":
-                assert current_context["context"] == "VCALENDAR", "VJOURNAL must be embedded in VCALENDAR"
-                context.append(_init_data_dict({}, "VJOURNAL"))
-            elif value == "VALARM":
-                assert current_context["context"] != "VALARM", "VALARM not embedded in VALARM"
-                context.append(_init_data_dict({}, "VALARM"))
+
+        if capture is not None:
+            capture["lines"].append(line)
+            if key == "BEGIN":
+                capture["depth"] += 1
+            elif key == "END":
+                capture["depth"] -= 1
+                if capture["depth"] == 0:
+                    context[-1]["unknown_components"].append("\r\n".join(capture["lines"]))
+                    capture = None
             continue
+
+        current_context = context[-1]
+
+        if key == "BEGIN":
+            component = value.upper()
+            allowed = _KNOWN_COMPONENTS.get(component)
+            if allowed is None:
+                capture = {"name": component, "depth": 1, "lines": [line]}
+                continue
+            if current_context["context"] not in allowed:
+                raise ParseError(
+                    f"BEGIN:{component} is not valid inside {current_context['context']} "
+                    f"(expected one of {', '.join(allowed)})")
+            context.append(_init_data_dict({}, component))
+            continue
+
         elif key == "END":
-            assert current_context["context"] == value.upper(), f"END:{value.upper()} should match current context {current_context["context"]}"
+            component = value.upper()
+            if current_context["context"] != component:
+                raise ParseError(
+                    f"END:{component} does not match the open component "
+                    f"{current_context['context']}")
+            if len(context) < 2:
+                raise ParseError(f"END:{component} with no enclosing component")
             parent_context = context[-2]
-            if value == "VCALENDAR" or value == "VCARD":
+            if component in ("VCALENDAR", "VCARD"):
                 parent_context["content"] = context.pop()
-            elif value == "VTODO":
+            elif component in _ITEM_COMPONENTS:
                 parent_context["items"].append(context.pop())
-            elif value == "VEVENT":
-                parent_context["items"].append(context.pop())
-            elif value == "VJOURNAL":
-                parent_context["items"].append(context.pop())
-            elif value == "VALARM" and current_context["context"]:
+            elif component == "VALARM":
                 parent_context["alarms"].append(context.pop())
             context[-1] = parent_context
+
         elif current_context["context"] == "VALARM":
-            current_context = _context_alarm(current_context, key, params, value)
-            context[-1] = current_context
+            context[-1] = _context_alarm(current_context, key, params, value, line)
+
         else:
-            current_context = _context_item(current_context, key, params, value)
-            context[-1] = current_context
+            context[-1] = _context_item(current_context, key, params, value, line)
+
+    if capture is not None:
+        raise ParseError(f"BEGIN:{capture['name']} was never closed")
+    if len(context) != 1:
+        raise ParseError(f"unclosed component: {context[-1]['context']}")
 
     return context[0]
 
+_ITEM_MODELS = {"VEVENT": VEVENT, "VTODO": VTODO, "VJOURNAL": VJOURNAL}
+
 def to_model(data, etag:str=None)->list[VCARD|VTODO|VJOURNAL|VEVENT]:
     data_dict = data if isinstance(data, dict) else webdav_data(data)
+    content = data_dict["content"]
+    raw = data_dict.get("raw_contents")
 
-    if data_dict["content"]["context"] == "VCARD":
-        vcard = VCARD(**data_dict["content"])
-        vcard.raw_contents = data_dict["raw_contents"]
+    if content["context"] == "VCARD":
+        vcard = VCARD(**content)
+        vcard.raw_contents = raw
         if etag:
             vcard.etag = etag
         return [vcard]
-    elif data_dict["content"]["context"] == "VCALENDAR":
+
+    elif content["context"] == "VCALENDAR":
+        # VCALENDAR-level content the model does not understand -- CALSCALE,
+        # METHOD, and above all VTIMEZONE. It belongs to the enclosing calendar
+        # rather than to any one component, so each item carries a copy and
+        # re-emits it when serialized standalone.
+        calendar_properties = content.get("unknown_properties", [])
+        calendar_components = content.get("unknown_components", [])
+
         result = []
-        for item in data_dict["content"]["items"]:
-            match(item["context"]):
-                case "VTODO": 
-                    new_item = VTODO(**item)
-                    new_item.raw_contents = data_dict["raw_contents"]
-                    if etag:
-                        new_item.etag = etag
-                    result.append(new_item)
-                case "VJOURNAL": 
-                    new_item = VJOURNAL(**item)
-                    new_item.raw_contents = data_dict["raw_contents"]
-                    if etag:
-                        new_item.etag = etag
-                    result.append(new_item)
-                case "VEVENT": 
-                    new_item = VEVENT(**item)
-                    new_item.raw_contents = data_dict["raw_contents"]
-                    if etag:
-                        new_item.etag = etag
-                    result.append(new_item)
-                case _:
-                    raise WebDAVError(f"Unknown element type: {item["context"]}")
+        for item in content["items"]:
+            model = _ITEM_MODELS.get(item["context"])
+            if model is None:
+                raise ParseError(f"Unknown element type: {item['context']}")
+            new_item = model(**item)
+            new_item.raw_contents = raw
+            new_item.calendar_properties = list(calendar_properties)
+            new_item.calendar_components = list(calendar_components)
+            if etag:
+                new_item.etag = etag
+            result.append(new_item)
         return result
+
     else:
-        raise WebDAVError(f"Unknown element type: {data_dict["content"]["context"]}")
+        raise ParseError(f"Unknown element type: {content['context']}")

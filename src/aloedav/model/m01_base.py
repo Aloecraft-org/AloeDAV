@@ -10,15 +10,69 @@ from aloedav.model.m00_constant import PhoneType, AddressType
 def utc_now():
     return datetime.now(timezone.utc)
 
+# Wire order follows RFC 5545 3.3.10 so serialization is stable. Module level
+# rather than a class attribute: pydantic claims leading-underscore class
+# attributes as private and they stop being plain iterables.
+RRULE_WIRE_ORDER = (
+    ("FREQ", "frequency"), ("UNTIL", "until"), ("COUNT", "count"),
+    ("INTERVAL", "interval"), ("BYSECOND", "by_second"),
+    ("BYMINUTE", "by_minute"), ("BYHOUR", "by_hour"), ("BYDAY", "by_day"),
+    ("BYMONTHDAY", "by_month_day"), ("BYYEARDAY", "by_year_day"),
+    ("BYWEEKNO", "by_week_no"), ("BYMONTH", "by_month"),
+    ("BYSETPOS", "by_set_pos"), ("WKST", "week_start"),
+)
+
 class RecurrenceRule(BaseModel):
+    """
+    An RFC 5545 3.3.10 RECUR value. The BY* vocabulary is closed, so all of it
+    is modelled: a partially-modelled rule is worse than an unmodelled one,
+    because dropping BYDAY on a rewrite silently changes when the event recurs
+    rather than merely losing detail.
+    """
     frequency: RecurrenceFrequency
     interval: int = 1
     count: Optional[int] = None
     until: Optional[datetime] = None
-    by_month_day: Optional[list[int]] = None
-    by_month: Optional[list[int]] = None
-    by_day: Optional[list[str]] = None
+    by_second: Optional[list[int]] = None
+    by_minute: Optional[list[int]] = None
     by_hour: Optional[list[int]] = None
+    by_day: Optional[list[str]] = None
+    by_month_day: Optional[list[int]] = None
+    by_year_day: Optional[list[int]] = None
+    by_week_no: Optional[list[int]] = None
+    by_month: Optional[list[int]] = None
+    by_set_pos: Optional[list[int]] = None
+    week_start: Optional[str] = None
+
+    # RRULE parts outside the RFC vocabulary, kept verbatim as "NAME=VALUE".
+    unknown_parts: list[str] = Field(default_factory=list)
+
+    @classmethod
+    def part_names(cls) -> dict[str, str]:
+        """Maps the wire part name to the model field name."""
+        return {name: field for name, field in RRULE_WIRE_ORDER}
+
+    def to_rrule_string(self) -> str:
+        from aloedav.model import ModelUtil
+        parts = []
+        for name, field in RRULE_WIRE_ORDER:
+            value = getattr(self, field)
+            if value is None:
+                continue
+            if name == "INTERVAL" and value == 1:
+                continue      # 1 is the default; omit for a stable, minimal rule
+            if name == "FREQ":
+                parts.append(f"FREQ={value.value if hasattr(value, 'value') else value}")
+            elif name == "UNTIL":
+                parts.append(f"UNTIL={ModelUtil.format_dt(value)}")
+            elif isinstance(value, list):
+                if not value:
+                    continue
+                parts.append(f"{name}={','.join(str(v) for v in value)}")
+            else:
+                parts.append(f"{name}={value}")
+        parts.extend(self.unknown_parts)
+        return ";".join(parts)
 
 class Alarm(BaseModel):
     action: Optional[AlarmAction] = AlarmAction.DISPLAY
@@ -95,6 +149,16 @@ class Item(BaseModel, ABC):
     raw_contents: Optional[str] = None
     url: Optional[str] = None
 
+    # Verbatim source lines for properties and sub-components this model does
+    # not understand. Carried through unchanged so that editing an object
+    # written by another client does not strip what that client put there.
+    unknown_properties: list[str] = Field(default_factory=list)
+    unknown_components: list[str] = Field(default_factory=list)
+
+    def _preserved_lines(self) -> list[str]:
+        """Unmodelled content, ready to append before the component's END."""
+        return list(self.unknown_properties) + list(self.unknown_components)
+
     @abstractmethod
     def update(self, update:"Item"):
         if update.extended_attributes != None:
@@ -113,6 +177,12 @@ class CalendarItem(Item):
     content_type:str = "text/calendar; charset=utf-8"
     file_ext:str = "ics"
     version: str = "2.0"
+
+    # Unmodelled content belonging to the enclosing VCALENDAR rather than to
+    # this component -- CALSCALE, METHOD, and VTIMEZONE definitions that
+    # DTSTART's TZID refers to. Re-emitted at calendar level on serialization.
+    calendar_properties: list[str] = Field(default_factory=list)
+    calendar_components: list[str] = Field(default_factory=list)
     summary: Optional[str] = None
     dtstart: Optional[datetime] = None
     dtstamp: Optional[datetime] = Field(default_factory=utc_now, description="Creation timestamp")

@@ -11,10 +11,12 @@ END:VCARD"""
 
 TEST_VCARD_SIMPLE_DICT = {
     "context": "ROOT",
-    "unknown_attributes": [],
+    "unknown_properties": [],
+    "unknown_components": [],
     "content": {
         "context": "VCARD",
-        "unknown_attributes": [],
+        "unknown_properties": [],
+        "unknown_components": [],
         "extended_attributes": {},
         "fn": "Forrest Gump",
         "emails": [
@@ -54,10 +56,12 @@ END:VCARD"""
 
 TEST_VCARD_FOLDED_DICT = {
     "context": "ROOT",
-    "unknown_attributes": [],
+    "unknown_properties": [],
+    "unknown_components": [],
     "content": {
         "context": "VCARD",
-        "unknown_attributes": [],
+        "unknown_properties": [],
+        "unknown_components": [],
         "extended_attributes": {},
         "fn": "Folded Line Tester",
         "emails": [],
@@ -97,15 +101,18 @@ END:VCALENDAR"""
 
 TEST_VEVENT_SIMPLE_DICT = {
     "context": "ROOT",
-    "unknown_attributes": [],
+    "unknown_properties": [],
+    "unknown_components": [],
     "content": {
         "context": "VCALENDAR",
-        "unknown_attributes": [],
+        "unknown_properties": [],
+        "unknown_components": [],
         "extended_attributes": {},
         "items": [
             {
                 "context": "VEVENT",
-                "unknown_attributes": [],
+                "unknown_properties": [],
+                "unknown_components": [],
                 "extended_attributes": {},
                 "attendees": [],
                 "alarms": [],
@@ -143,15 +150,18 @@ END:VCALENDAR"""
 
 TEST_VEVENT_FOLDED_DICT = {
     "context": "ROOT",
-    "unknown_attributes": [],
+    "unknown_properties": [],
+    "unknown_components": [],
     "content": {
         "context": "VCALENDAR",
-        "unknown_attributes": [],
+        "unknown_properties": [],
+        "unknown_components": [],
         "extended_attributes": {},
         "items": [
             {
                 "context": "VEVENT",
-                "unknown_attributes": [],
+                "unknown_properties": [],
+                "unknown_components": [],
                 "extended_attributes": {},
                 "attendees": [],
                 "alarms": [],
@@ -193,15 +203,18 @@ END:VCALENDAR"""
 
 TEST_VEVENT_COMPLEX_DICT = {
     "context": "ROOT",
-    "unknown_attributes": [],
+    "unknown_properties": [],
+    "unknown_components": [],
     "content": {
         "context": "VCALENDAR",
-        "unknown_attributes": [],
+        "unknown_properties": [],
+        "unknown_components": [],
         "extended_attributes": {},
         "items": [
             {
                 "context": "VEVENT",
-                "unknown_attributes": [],
+                "unknown_properties": [],
+                "unknown_components": [],
                 "extended_attributes": {},
                 "attendees": [
                     {
@@ -236,6 +249,7 @@ TEST_VEVENT_COMPLEX_DICT = {
                 "summary": "Weekly Project Sync",
                 "description": "Weekly sync to discuss project blockers.",
                 "recurrence_rule": {
+                    "unknown_parts": [],
                     "frequency": "WEEKLY",
                     "count": 10,
                     "interval": 1
@@ -269,21 +283,25 @@ END:VCALENDAR"""
 
 TEST_VTODO_WITH_ALARM_DICT = {
     "context": "ROOT",
-    "unknown_attributes": [],
+    "unknown_properties": [],
+    "unknown_components": [],
     "content": {
         "context": "VCALENDAR",
-        "unknown_attributes": [],
+        "unknown_properties": [],
+        "unknown_components": [],
         "extended_attributes": {},
         "items": [
             {
                 "context": "VTODO",
-                "unknown_attributes": [],
+                "unknown_properties": [],
+                "unknown_components": [],
                 "extended_attributes": {},
                 "attendees": [],
                 "alarms": [
                     {
                         "context": "VALARM",
-                        "unknown_attributes": [],
+                        "unknown_properties": [],
+                        "unknown_components": [],
                         "action": "DISPLAY",
                         "description": "Reminder: Submit Report Now",
                         "trigger_minutes": 15
@@ -323,15 +341,18 @@ END:VCALENDAR"""
 
 TEST_VCALENDAR_MIXED_DICT = {
     "context": "ROOT",
-    "unknown_attributes": [],
+    "unknown_properties": [],
+    "unknown_components": [],
     "content": {
         "context": "VCALENDAR",
-        "unknown_attributes": [],
+        "unknown_properties": [],
+        "unknown_components": [],
         "extended_attributes": {},
         "items": [
             {
                 "context": "VEVENT",
-                "unknown_attributes": [],
+                "unknown_properties": [],
+                "unknown_components": [],
                 "extended_attributes": {},
                 "attendees": [],
                 "alarms": [],
@@ -343,7 +364,8 @@ TEST_VCALENDAR_MIXED_DICT = {
             },
             {
                 "context": "VTODO",
-                "unknown_attributes": [],
+                "unknown_properties": [],
+                "unknown_components": [],
                 "extended_attributes": {},
                 "attendees": [],
                 "alarms": [],
@@ -380,10 +402,12 @@ END:VCARD"""
 
 TEST_VCARD_RICH_DICT = {
     "context": "ROOT",
-    "unknown_attributes": [],
+    "unknown_properties": [],
+    "unknown_components": [],
     "content": {
         "context": "VCARD",
-        "unknown_attributes": [],
+        "unknown_properties": [],
+        "unknown_components": [],
         "extended_attributes": {},
         "fn": "Rich Data User",
         "emails": [

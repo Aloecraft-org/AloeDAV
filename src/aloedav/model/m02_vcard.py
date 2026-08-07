@@ -126,6 +126,8 @@ class VCARD(Item):
             for k, v in self.extended_attributes.items():
                 lines.append(f"{k}:{esc(v)}")
 
+        # Anything the model does not understand, put back untouched.
+        lines.extend(self._preserved_lines())
         lines.append("END:VCARD")
         return ModelUtil.join_lines(lines)
     

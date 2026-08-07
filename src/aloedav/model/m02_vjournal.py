@@ -103,26 +103,7 @@ class VJOURNAL(CalendarItem):
 
         # --- Recurrence Rule (RRULE) ---
         if self.recurrence_rule:
-            r = self.recurrence_rule
-            freq = r.frequency.value if hasattr(r.frequency, 'value') else r.frequency
-            parts = [f"FREQ={freq}"]
-            
-            if r.interval > 1:
-                parts.append(f"INTERVAL={r.interval}")
-            
-            if r.count:
-                parts.append(f"COUNT={r.count}")
-            elif r.until:
-                parts.append(f"UNTIL={format_dt(r.until)}")
-            
-            if r.by_month:
-                parts.append(f"BYMONTH={','.join(map(str, r.by_month))}")
-            if r.by_month_day:
-                parts.append(f"BYMONTHDAY={','.join(map(str, r.by_month_day))}")
-            if r.by_day:
-                parts.append(f"BYDAY={','.join(r.by_day)}")
-            
-            lines.append(f"RRULE:{';'.join(parts)}")
+            lines.append(f"RRULE:{self.recurrence_rule.to_rrule_string()}")
 
         # --- Recurrence ID (if this is an override of a recurring entry) ---
         if self.recurrence_id:
@@ -140,6 +121,8 @@ class VJOURNAL(CalendarItem):
                     "END:VALARM",
                 ])
 
+        # Anything the model does not understand, put back untouched.
+        lines.extend(self._preserved_lines())
         lines.append("END:VJOURNAL")
         return ModelUtil.join_lines(lines)
 
@@ -151,6 +134,8 @@ class VJOURNAL(CalendarItem):
             "BEGIN:VCALENDAR",
             f"VERSION:{self.version}",
             f"PRODID:{ModelUtil.escape_text(self.prod_id)}",
+            *self.calendar_properties,
+            *self.calendar_components,
             self.to_vjournal_string(),
             "END:VCALENDAR",
         ]
