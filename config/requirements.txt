@@ -4,3 +4,5 @@ pydantic[email]
 # Ships the IANA zone database so TZID resolution behaves the same on
 # Windows and slim containers, which carry no system zoneinfo.
 tzdata
+# RRULE evaluation for recurrence expansion.
+python-dateutil

@@ -29,6 +29,7 @@ we carefully preserved. Turning a value into a real instant is therefore a
 separate, best-effort step -- `aware()` and `to_utc()`, which return None when
 the zone cannot be resolved rather than guessing.
 """
+import re
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from enum import StrEnum
 from typing import Any, Optional
@@ -361,6 +362,34 @@ class DateTimeValue(BaseModel):
     def __repr__(self) -> str:
         zone = f", tzid={self.tzid!r}" if self.tzid else ""
         return f"DateTimeValue({self.to_wire()!r}, {self.kind.value}{zone})"
+
+
+# RFC 5545 3.3.6: P[n]W | P[n]D[T[n]H[n]M[n]S], optionally signed.
+_DURATION = re.compile(
+    r"^([+-])?P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$")
+
+
+def parse_duration(text) -> Optional[timedelta]:
+    """
+    Reads an RFC 5545 DURATION into a timedelta, or None if it is not one.
+
+    Needed to place the end of an instance whose component gives a length
+    rather than a DTEND.
+    """
+    if text is None:
+        return None
+    if isinstance(text, timedelta):
+        return text
+    match = _DURATION.match(str(text).strip().upper())
+    if not match:
+        return None
+    sign, weeks, days, hours, minutes, seconds = match.groups()
+    if not any((weeks, days, hours, minutes, seconds)):
+        return None
+    length = timedelta(weeks=int(weeks or 0), days=int(days or 0),
+                       hours=int(hours or 0), minutes=int(minutes or 0),
+                       seconds=int(seconds or 0))
+    return -length if sign == "-" else length
 
 
 def _midnight(value) -> datetime:

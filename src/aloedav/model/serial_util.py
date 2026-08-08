@@ -1,6 +1,6 @@
 import re
 from aloedav.exceptions import PreconditionFailed, WebDAVError, AuthenticationError, ResourceNotFound, AloeDAVClientError, ParseError
-from aloedav.model.m00_constant import EventStatus, Transparency
+from aloedav.model.m00_constant import EventStatus, Transparency, RecurrenceFrequency
 from aloedav.model.m00_constant import PhoneType, AddressType
 # from aloedav.model.m01_base import Address, Phone, Attendee, RecurrenceRule, Attachment
 from aloedav.model import ModelUtil
@@ -334,7 +334,15 @@ def _context_item(data:dict, key:str, params:dict, value:str, line:str=None)->di
                     r_data[field] = [int(x) for x in v.split(",")]
                 except ValueError:
                     r_data["unknown_parts"].append(rp)
-        if "frequency" in r_data:
+        # A rule with no FREQ, or one naming a frequency this model does not
+        # know, cannot be represented. Dropping it would change when the event
+        # recurs, so the line is kept verbatim instead -- same contract as any
+        # other unmodelled property.
+        try:
+            r_data["frequency"] = RecurrenceFrequency(str(r_data["frequency"]).upper())
+        except (KeyError, ValueError):
+            data["unknown_properties"].append(line if line else f"{key}:{value}")
+        else:
             data["recurrence_rule"] = r_data
     elif key == "ATTACH":
         # Basic handling for URL attachments
