@@ -40,10 +40,10 @@ Two corollaries that govern design decisions below:
 | 2. Time | **In progress** — representation and expansion landed; free/busy remains |
 | 3. Agent ergonomics | Not started |
 | 4. Protocol completeness (client) | Not started |
-| 5. Server | **In progress** — storage layer and read-only browser view landed; protocol layer next |
+| 5. Server | **In progress** — storage, browser view and the protocol layer landed; untested against real clients |
 | 6. Breadth | Not started |
 
-Test count: 13 → 304.
+Test count: 13 → 390.
 
 ---
 
@@ -78,7 +78,23 @@ five methods that could not execute. Details in the commit message. Summary:
   kept verbatim; `SECONDLY`/`MINUTELY`/`HOURLY` added to `RecurrenceFrequency`.
 - **Structural errors raise `ParseError`,** not `assert` (which `python -O` strips).
 
+- **Protocol layer** (`aloedav.server`). Starlette app over the same `Store`: OPTIONS,
+  PROPFIND, PROPPATCH, GET/HEAD, PUT, DELETE, MKCOL, MKCALENDAR, the four REPORTs and
+  RFC 6764 discovery, with Basic auth over salted PBKDF2. `time-range` is evaluated
+  against expanded instances. Served on one port alongside the browser view.
+- **Interop tests.** `AloeDAVClient` drives the server over a real socket through
+  uvicorn. This found a client bug no unit test could: `list_calendar_objects` asked for
+  `calendar-data` in the CalDAV namespace but stripped only `DAV:` when parsing, so that
+  REPORT had always returned nothing.
+
 ### Remaining
+
+- [ ] **Verify against real clients.** Apple Calendar, DAVx5 and Thunderbird are the
+      acceptance test that matters; everything so far is self-assessment. **Effort: M**
+- [ ] **PROPPATCH cannot persist.** `Store` has no update path for collection metadata,
+      so a client setting a display name is answered 403 rather than told 200 for
+      something not stored. **Effort: S**
+- [ ] **No ACL or sharing.** A principal sees only its own tree. **Effort: L**
 
 - [x] **The resource model.** `VCalendarResource`/`VCardResource` in `m01_resource.py` are
       now the unit of GET/PUT/ETag/filename, so a recurring master and its `RECURRENCE-ID`
@@ -179,7 +195,23 @@ five methods that could not execute. Details in the commit message. Summary:
   server will use. Agenda from `expand()`, marking moved instances and distinguishing
   all-day from midnight and floating from zoned. `python -m aloedav.web --root ./data --demo`
 
+- **Protocol layer** (`aloedav.server`). Starlette app over the same `Store`: OPTIONS,
+  PROPFIND, PROPPATCH, GET/HEAD, PUT, DELETE, MKCOL, MKCALENDAR, the four REPORTs and
+  RFC 6764 discovery, with Basic auth over salted PBKDF2. `time-range` is evaluated
+  against expanded instances. Served on one port alongside the browser view.
+- **Interop tests.** `AloeDAVClient` drives the server over a real socket through
+  uvicorn. This found a client bug no unit test could: `list_calendar_objects` asked for
+  `calendar-data` in the CalDAV namespace but stripped only `DAV:` when parsing, so that
+  REPORT had always returned nothing.
+
 ### Remaining
+
+- [ ] **Verify against real clients.** Apple Calendar, DAVx5 and Thunderbird are the
+      acceptance test that matters; everything so far is self-assessment. **Effort: M**
+- [ ] **PROPPATCH cannot persist.** `Store` has no update path for collection metadata,
+      so a client setting a display name is answered 403 rather than told 200 for
+      something not stored. **Effort: S**
+- [ ] **No ACL or sharing.** A principal sees only its own tree. **Effort: L**
 
 **The architecture already supports this.** `Collection` is the seam: `RemoteCollection`
 turns Collection calls into HTTP requests; a server turns HTTP requests into Collection

@@ -10,14 +10,38 @@ read-modify-write against data some other client authored. Any property the mode
 fails to represent is a property the agent silently deletes on the user's behalf.
 Fidelity therefore ranks above features — see [ROADMAP.md](ROADMAP.md).
 
-> **Status:** the client, models and storage are usable; the DAV *server* is not built
-> yet. See [ROADMAP.md](ROADMAP.md) for what is done and what is next.
+> **Status:** the client, models, storage and a CalDAV/CardDAV server are usable. The
+> server has not yet been tested against Apple Calendar or DAVx5 — see
+> [ROADMAP.md](ROADMAP.md) for what is done and what is next.
 
 ## Install
 
 ```bash
 pip install -e .
 ```
+
+## Running the server
+
+```bash
+python -m aloedav.server --root ./data useradd alice     # prompts for a password
+python -m aloedav.server --root ./data
+```
+
+Point a CalDAV or CardDAV client at `http://127.0.0.1:8000/` and it discovers the rest.
+The browser view is served on the same port at `/.web/`.
+
+**Run it behind TLS on anything but a trusted local network.** Basic authentication is
+what CalDAV clients implement — several implement only that — so the password goes on
+the wire with every request. Passwords are stored as salted PBKDF2-HMAC-SHA256.
+
+Supported: `OPTIONS`, `PROPFIND`, `PROPPATCH`, `GET`, `HEAD`, `PUT`, `DELETE`, `MKCOL`,
+`MKCALENDAR`, and the `sync-collection`, `calendar-query`, `calendar-multiget`,
+`addressbook-query` and `addressbook-multiget` reports, plus RFC 6764 `.well-known`
+discovery. `time-range` filters are evaluated against *expanded* instances, so a
+recurring event is matched on the occurrences it actually generates rather than on its
+stored `DTSTART`.
+
+Each principal may act on its own tree and no other; there is no sharing model yet.
 
 ## Browser view
 

@@ -386,7 +386,11 @@ class AloeDAVClient(BaseAloeDAVClient):
 </C:calendar-query>"""
  
         response = self._request("REPORT", url, body, headers={"Depth": "1"})
-        doc = self._multistatus(response, f"List objects in {calendar_id}", namespaces={'DAV:': None})
+        # Every namespace is stripped, not just DAV:. The data being asked for
+        # lives in the CalDAV namespace, so a parse that only collapsed DAV:
+        # left the key as "urn:...:caldav:calendar-data" and the lookup below
+        # never matched -- this REPORT always came back empty.
+        doc = self._multistatus(response, f"List objects in {calendar_id}")
         return self._extract_objects(doc, 'calendar-data')
 
     def list_addressbook_objects(self, addressbook_id)-> list[VCARD]:
@@ -403,5 +407,6 @@ class AloeDAVClient(BaseAloeDAVClient):
 </C:addressbook-query>"""
  
         response = self._request("REPORT", url, body, headers={"Depth": "1"})
-        doc = self._multistatus(response, f"List objects in {addressbook_id}", namespaces={'DAV:': None})
+        # As above: address-data is in the CardDAV namespace.
+        doc = self._multistatus(response, f"List objects in {addressbook_id}")
         return self._extract_objects(doc, 'address-data')
