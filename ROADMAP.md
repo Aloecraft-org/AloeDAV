@@ -43,7 +43,7 @@ Two corollaries that govern design decisions below:
 | 5. Server | **In progress** — storage layer and read-only browser view landed; protocol layer next |
 | 6. Breadth | Not started |
 
-Test count: 13 → 235.
+Test count: 13 → 304.
 
 ---
 
@@ -167,10 +167,14 @@ five methods that could not execute. Details in the commit message. Summary:
 
 ### Done
 
-- **Storage layer** (`aloedav.storage`). `Store` interface plus `FileStore`, keyed by
-  resource so a master and its overrides share one file. Content-hash ETags, atomic writes,
+- **Storage layer** (`aloedav.storage`). `Store` interface with two backends, keyed by
+  resource so a master and its overrides share one file. Content-hash ETags,
   path-traversal validation, a bounded sync log, and `SyncTokenExpired` for RFC 6578's
-  403 `valid-sync-token`.
+  403 `valid-sync-token`. Shared semantics live in `_shared.py` so the backends cannot
+  drift; the 36-test contract runs unchanged against both.
+- **Aloelite backend, now the default.** One portable SQLite-backed volume with real
+  transactions and optional encryption. `FileStore` stays a first-class alternative for
+  `ls`/`grep`-readable data, and `migrate` moves an existing store either direction.
 - **Browser view** (`aloedav.web`). Read-only Starlette app over the same `Store` the DAV
   server will use. Agenda from `expand()`, marking moved instances and distinguishing
   all-day from midnight and floating from zoned. `python -m aloedav.web --root ./data --demo`
@@ -255,15 +259,21 @@ passes a fully-populated object expecting only truthy fields to apply.
 `user` is a first-class part of the store's addressing from the start, so the layout does
 not have to be retrofitted later. Auth and ACL are not built yet.
 
-### D5 — Stack and storage — **decided: Starlette + filesystem** ✅
+### D5 — Stack and storage — **decided: Starlette + Aloelite (filesystem alternative)** ✅
 
 Starlette because a DAV server needs arbitrary HTTP verbs (`PROPFIND`, `REPORT`,
 `MKCALENDAR`), which `Route(methods=[...])` takes directly. The blocking store is wrapped in
 `run_in_threadpool` rather than made async, so storage stays plain synchronous code.
 
-Filesystem storage because the project's first principle is not destroying what it does not
-understand, and a layout you can `cat` makes that checkable rather than asserted. `Store` is
-an interface; SQLite drops in unchanged if concurrency or time-range indexing starts to hurt.
+Storage started filesystem-only, on the argument that a layout you can `cat` makes the
+fidelity principle checkable rather than asserted. That argument was overweighted: the
+*tests* are the real check, and inspectability is a debugging convenience. Aloelite is now
+the default — transactional integrity, one portable file, optional encryption — with
+`FileStore` kept as a first-class alternative for people who do want `ls` and `grep`.
+
+Users are not asked to choose. Someone standing up a calendar server has no basis for that
+decision and is not anticipating the question; the default is set, documented, and
+reversible with `migrate` at any time.
 
 ---
 

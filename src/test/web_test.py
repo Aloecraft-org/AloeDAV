@@ -151,6 +151,27 @@ class TestResourceView(WebTest):
         self.assertIn("ada@example.com", body)
 
 
+class TestServesFromEitherBackend(unittest.TestCase):
+    """The view only speaks to the Store interface, so it must not care which."""
+
+    def test_agenda_renders_over_the_aloelite_backend(self):
+        import tempfile
+        from pathlib import Path
+        from aloedav.storage.backends import open_store
+
+        root = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        store = open_store(root)                      # the default backend
+        self.addCleanup(store.close)
+        store.create_collection("alice", "work", CollectionType.CALENDAR, "Work")
+        store.put_resource("alice", "work", to_resource(SERIES))
+
+        client = TestClient(create_app(store))
+        body = client.get("/alice/work/?start=2026-03-09").text
+        self.assertIn("Standup moved", body)
+        self.assertIn("New York", body)
+
+
 class TestEscaping(WebTest):
 
     def test_summary_cannot_inject_markup(self):

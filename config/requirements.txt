@@ -9,3 +9,5 @@ python-dateutil
 # ASGI framework for the browser view and, later, the DAV server.
 starlette
 uvicorn
+# Default storage backend: a filesystem inside one SQLite file.
+aloelite

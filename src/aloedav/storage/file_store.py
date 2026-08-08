@@ -4,16 +4,15 @@ A store that keeps each resource as a file on disk.
     <root>/<user>/<collection_id>/collection.json
     <root>/<user>/<collection_id>/<filename>.ics
 
-Chosen over a database because the project's first principle is not destroying
-what it does not understand, and a layout you can `cat` makes that checkable
-rather than merely asserted: when an agent and Apple Calendar disagree about an
-event, you can read exactly what each of them wrote. It is also trivially
-backed up and diffed by ordinary tools.
+This is the alternative backend, for people who want their data readable with
+`ls`, `grep` and any text editor: when an agent and Apple Calendar disagree
+about an event, you can read exactly what each of them wrote. It is also
+trivially diffed and backed up by ordinary tools.
 
-The cost is that a directory listing has to parse every file to answer a
-listing, and that concurrent writers need real locking. Both are handled below
-but neither is free, which is why `Store` is an interface -- a SQLite
-implementation can drop in unchanged if the tradeoff stops paying.
+`AloeliteStore` is the default because it gives real transactional integrity
+rather than the hand-rolled atomic writes below, one portable file, and
+optional encryption. The layouts are identical, so moving between the two is a
+straight copy -- see `python -m aloedav.web --help` for the migrate command.
 """
 import fcntl
 import hashlib
@@ -25,51 +24,15 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
-from aloedav.collection import CollectionType, ComponentSet
 from aloedav.model.m01_resource import Resource
 from aloedav.model.serial_util import to_resource
 from aloedav.storage import (AlreadyExists, CollectionInfo, CollectionNotFound,
                              EtagMismatch, ResourceNotFoundInStore, Store,
-                             StorageError, SyncChange, SyncResult,
-                             SyncTokenExpired)
-
-METADATA_NAME = "collection.json"
-
-# How many changes the sync log keeps. Beyond this the oldest entries are
-# dropped and clients holding those tokens are told to resync -- an unbounded
-# log would grow forever on a long-lived server, which is the failure the
-# in-memory LocalCollection has today.
-SYNC_LOG_LIMIT = 2000
-
-def _check_segment(value: str, what: str) -> str:
-    """
-    Validates one path segment.
-
-    A server takes these straight from a request URL, so this is a security
-    boundary rather than tidiness. It rejects what is dangerous -- separators,
-    traversal, NUL, dotfiles -- rather than allowing only a known-good
-    character set, because real UIDs contain all sorts of punctuation and an
-    allowlist would refuse legitimate resources.
-    """
-    text = str(value or "")
-    if (not text
-            or text in (".", "..")
-            or text.startswith(".")
-            or "/" in text or "\\" in text or "\0" in text
-            or text == METADATA_NAME):        # would clobber the metadata file
-        raise StorageError(f"unsafe {what}: {value!r}")
-    return text
-
-
-def compute_etag(body: str) -> str:
-    """
-    A strong validator derived from the content.
-
-    Hashing rather than assigning a random id means an unchanged rewrite keeps
-    its ETag, so a client that re-uploads identical bytes is not told the
-    resource changed, and validators survive a restart.
-    """
-    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:32]
+                             StorageError, SyncResult)
+from aloedav.storage._shared import (METADATA_NAME, append_change, build_info,
+                                     build_sync, check_segment, compute_etag,
+                                     default_component_set, is_resource_name,
+                                     new_metadata)
 
 
 @contextmanager
@@ -85,20 +48,20 @@ def _locked(path: Path):
         os.close(handle)
 
 
-def _read_exact(path: Path) -> str:
+def _read_exact(path: Path) -> bytes:
     """
     Reads a file back byte-for-byte.
 
-    Path.read_text applies universal-newline translation, which turns the CRLF
-    that RFC 5545 requires into LF. That silently changes the content, so an
-    ETag computed from the file never matched the one computed when it was
-    written and every conditional request failed.
+    Binary mode, not text: Path.read_text applies universal-newline
+    translation, which turns the CRLF that RFC 5545 requires into LF. That
+    silently changed the content, so an ETag computed from the file never
+    matched the one computed when it was written and every conditional request
+    failed. Reading bytes makes the mistake unavailable.
     """
-    with open(path, "r", encoding="utf-8", newline="") as stream:
-        return stream.read()
+    return path.read_bytes()
 
 
-def _write_atomically(path: Path, text: str) -> None:
+def _write_atomically(path: Path, body: bytes) -> None:
     """
     Writes via a temporary file and a rename.
 
@@ -109,8 +72,8 @@ def _write_atomically(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp-")
     try:
-        with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
-            stream.write(text)
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(body)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
@@ -128,10 +91,10 @@ class FileStore(Store):
     # ---- paths --------------------------------------------------------
 
     def _user_dir(self, user: str) -> Path:
-        return self.root / _check_segment(user, "user")
+        return self.root / check_segment(user, "user")
 
     def _collection_dir(self, user: str, collection_id: str) -> Path:
-        return self._user_dir(user) / _check_segment(collection_id, "collection id")
+        return self._user_dir(user) / check_segment(collection_id, "collection id")
 
     def _require_collection(self, user: str, collection_id: str) -> Path:
         directory = self._collection_dir(user, collection_id)
@@ -143,7 +106,7 @@ class FileStore(Store):
 
     def _read_metadata(self, directory: Path) -> dict:
         try:
-            return json.loads(_read_exact(directory / METADATA_NAME))
+            return json.loads(_read_exact(directory / METADATA_NAME).decode("utf-8"))
         except FileNotFoundError:
             raise CollectionNotFound(f"no such collection: {directory}")
         except json.JSONDecodeError as error:
@@ -151,38 +114,17 @@ class FileStore(Store):
 
     def _write_metadata(self, directory: Path, metadata: dict) -> None:
         _write_atomically(directory / METADATA_NAME,
-                          json.dumps(metadata, indent=2, sort_keys=True))
+                          json.dumps(metadata, indent=2, sort_keys=True).encode("utf-8"))
 
     def _info(self, user: str, collection_id: str, directory: Path,
               metadata: dict) -> CollectionInfo:
-        log = metadata.get("sync_log", [])
-        token = log[-1]["token"] if log else ""
-        return CollectionInfo(
-            user=user,
-            collection_id=collection_id,
-            collection_type=CollectionType(metadata["collection_type"]),
-            displayname=metadata.get("displayname", ""),
-            description=metadata.get("description", ""),
-            component_set=ComponentSet(metadata.get("component_set", 0)),
-            ctag=token,
-            sync_token=token,
-            resource_count=sum(1 for _ in self._resource_files(directory)))
+        return build_info(user, collection_id, metadata,
+                          sum(1 for _ in self._resource_files(directory)))
 
     def _resource_files(self, directory: Path):
         for path in sorted(directory.iterdir()):
-            if path.is_file() and path.name != METADATA_NAME and not path.name.startswith("."):
+            if path.is_file() and is_resource_name(path.name):
                 yield path
-
-    def _append_change(self, metadata: dict, filename: Optional[str],
-                       deleted: bool) -> str:
-        log = metadata.setdefault("sync_log", [])
-        ordinal = (log[-1]["ordinal"] + 1) if log else 1
-        token = f"{ordinal:08d}-{os.urandom(8).hex()}"
-        log.append({"ordinal": ordinal, "token": token,
-                    "filename": filename, "deleted": deleted})
-        if len(log) > SYNC_LOG_LIMIT:
-            del log[:-SYNC_LOG_LIMIT]
-        return token
 
     # ---- collections --------------------------------------------------
 
@@ -212,18 +154,10 @@ class FileStore(Store):
         if (directory / METADATA_NAME).exists():
             raise AlreadyExists(f"collection already exists: /{user}/{collection_id}")
 
-        collection_type = CollectionType(collection_type)
         if component_set is None:
-            component_set = (ComponentSet.VCONTACT
-                             if collection_type is CollectionType.ADDRESSBOOK
-                             else ComponentSet.VEVENT | ComponentSet.VTODO | ComponentSet.VJOURNAL)
-
-        metadata = {"collection_type": collection_type.value,
-                    "displayname": displayname or collection_id,
-                    "description": description,
-                    "component_set": component_set.value,
-                    "sync_log": []}
-        self._append_change(metadata, None, False)
+            component_set = default_component_set(collection_type)
+        metadata = new_metadata(collection_type, displayname or collection_id,
+                                description, component_set)
         directory.mkdir(parents=True, exist_ok=True)
         self._write_metadata(directory, metadata)
         return self._info(user, collection_id, directory, metadata)
@@ -246,7 +180,7 @@ class FileStore(Store):
     def _load(self, path: Path) -> Optional[Resource]:
         body = _read_exact(path)
         try:
-            resource = to_resource(body, compute_etag(body))
+            resource = to_resource(body.decode("utf-8"), compute_etag(body))
         except Exception:
             # A file this parser cannot read is left on disk untouched and
             # omitted from listings. Deleting it, or letting one bad file break
@@ -257,7 +191,7 @@ class FileStore(Store):
 
     def get_resource(self, user: str, collection_id: str, filename: str) -> Resource:
         directory = self._require_collection(user, collection_id)
-        path = directory / _check_segment(filename, "filename")
+        path = directory / check_segment(filename, "filename")
         if not path.is_file():
             raise ResourceNotFoundInStore(f"no such resource: /{user}/{collection_id}/{filename}")
         resource = self._load(path)
@@ -268,9 +202,9 @@ class FileStore(Store):
     def put_resource(self, user, collection_id, resource, filename=None,
                      if_match=None, if_none_match=False) -> str:
         directory = self._require_collection(user, collection_id)
-        name = _check_segment(filename or resource.filename(), "filename")
+        name = check_segment(filename or resource.filename(), "filename")
         path = directory / name
-        body = resource.to_webdav_string()
+        body = resource.to_webdav_string().encode("utf-8")
         etag = compute_etag(body)
 
         with _locked(directory / ".lock"):
@@ -290,13 +224,13 @@ class FileStore(Store):
 
             _write_atomically(path, body)
             metadata = self._read_metadata(directory)
-            self._append_change(metadata, name, False)
+            append_change(metadata, name, False)
             self._write_metadata(directory, metadata)
         return etag
 
     def delete_resource(self, user, collection_id, filename, if_match=None) -> None:
         directory = self._require_collection(user, collection_id)
-        name = _check_segment(filename, "filename")
+        name = check_segment(filename, "filename")
         path = directory / name
 
         with _locked(directory / ".lock"):
@@ -308,33 +242,12 @@ class FileStore(Store):
                     raise EtagMismatch(f"etag mismatch for {name}")
             path.unlink()
             metadata = self._read_metadata(directory)
-            self._append_change(metadata, name, True)
+            append_change(metadata, name, True)
             self._write_metadata(directory, metadata)
 
     # ---- change tracking ----------------------------------------------
 
     def sync(self, user: str, collection_id: str, token: str = None) -> SyncResult:
         directory = self._require_collection(user, collection_id)
-        metadata = self._read_metadata(directory)
-        log = metadata.get("sync_log", [])
-        current = log[-1]["token"] if log else ""
-
-        if not token:
-            return SyncResult(
-                changes=[SyncChange(filename=p.name) for p in self._resource_files(directory)],
-                sync_token=current, is_initial=True)
-
-        position = next((entry["ordinal"] for entry in log if entry["token"] == token), None)
-        if position is None:
-            raise SyncTokenExpired(f"sync token no longer held: {token}")
-
-        # Later entries win, so a file changed several times is reported once
-        # with its final state.
-        latest = {}
-        for entry in log:
-            if entry["ordinal"] > position and entry["filename"]:
-                latest[entry["filename"]] = entry["deleted"]
-        return SyncResult(
-            changes=[SyncChange(filename=name, deleted=deleted)
-                     for name, deleted in sorted(latest.items())],
-            sync_token=current)
+        return build_sync(self._read_metadata(directory), token,
+                          [p.name for p in self._resource_files(directory)])
