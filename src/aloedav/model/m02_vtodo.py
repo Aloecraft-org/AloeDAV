@@ -5,6 +5,7 @@ from enum import StrEnum
 from aloedav.model import ModelUtil
 from aloedav.model.m00_constant import TodoStatus
 from aloedav.model.m01_base import CalendarItem, VCalendar, RecurrenceRule, Alarm, Attendee, Attachment
+from aloedav.model.m00_datetime import DateTimeValue
 
 class VTODO(CalendarItem):
     status: Optional[TodoStatus] = TodoStatus.NEEDS_ACTION
@@ -16,7 +17,7 @@ class VTODO(CalendarItem):
 
     duration: Optional[str] = None
     related_to: Optional[str] = None
-    due: Optional[datetime] = None
+    due: Optional[DateTimeValue] = None
     completed: Optional[datetime] = None
 
     comments: Optional[str] = None
@@ -64,11 +65,11 @@ class VTODO(CalendarItem):
         lines.append(f"SUMMARY:{esc(self.summary)}")
 
         if self.dtstart:
-            lines.append(f"DTSTART:{format_dt(self.dtstart)}")
+            lines.append(self.dtstart.to_property("DTSTART"))
 
         # VTODO specific: DUE takes precedence over DURATION
         if self.due:
-            lines.append(f"DUE:{format_dt(self.due)}")
+            lines.append(self.due.to_property("DUE"))
         elif self.duration:
             lines.append(f"DURATION:{self.duration}")
 
@@ -124,11 +125,16 @@ class VTODO(CalendarItem):
 
         # --- Recurrence ID (marks this as an override of one instance) ---
         if self.recurrence_id:
-            lines.append(f"RECURRENCE-ID:{format_dt(self.recurrence_id)}")
+            lines.append(self.recurrence_id.to_property("RECURRENCE-ID"))
 
         # --- Recurrence Rule (RRULE) ---
         if self.recurrence_rule:
             lines.append(f"RRULE:{self.recurrence_rule.to_rrule_string()}")
+
+        # Instances subtracted from and added to the generated series.
+        from aloedav.model.m00_datetime import DateTimeValue
+        lines.extend(DateTimeValue.list_to_properties("EXDATE", self.exdate))
+        lines.extend(DateTimeValue.list_to_properties("RDATE", self.rdate))
 
         # --- Alarms (VALARM) ---
         if self.alarms:

@@ -2,6 +2,7 @@ import unittest
 from datetime import datetime, timezone, timedelta
 
 from aloedav.model import ModelUtil
+from aloedav.model.m00_datetime import DateTimeValue, DateTimeKind
 from aloedav.model.serial_util import to_model, webdav_data, parse_dt
 from aloedav.model.m01_base import Address, Phone, Alarm, Attendee
 from aloedav.model.m02_vcard import VCARD
@@ -145,7 +146,7 @@ class TestDateTimeHandling(unittest.TestCase):
     def test_naive_datetime_stays_floating(self):
         event = VEVENT(uid="e1", summary="Call", dtstart=datetime(2026, 3, 1, 12, 0))
         self.assertIn("DTSTART:20260301T120000\r\n", event.to_webdav_string())
-        self.assertIsNone(reparse(event).dtstart.tzinfo)
+        self.assertIs(reparse(event).dtstart.kind, DateTimeKind.FLOATING)
 
     def test_date_only_value_is_not_replaced_by_now(self):
         # A DATE value must parse to that date's midnight, never to "now".

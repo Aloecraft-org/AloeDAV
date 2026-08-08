@@ -37,13 +37,13 @@ Two corollaries that govern design decisions below:
 |---|---|
 | 0. Correctness floor | **Done** — `38ebfe8` |
 | 1. Fidelity | **In progress** — parser (`a7280f6`) and resource model landed; VALARM/ATTACH/vCard structured values remain |
-| 2. Time | Not started |
+| 2. Time | **In progress** — date-time representation landed; expansion and free/busy remain |
 | 3. Agent ergonomics | Not started |
 | 4. Protocol completeness (client) | Not started |
 | 5. Server | Not started |
 | 6. Breadth | Not started |
 
-Test count: 13 → 100.
+Test count: 13 → 146.
 
 ---
 
@@ -87,8 +87,7 @@ five methods that could not execute. Details in the commit message. Summary:
       indistinguishable) and serialized by VEVENT/VTODO as well as VJOURNAL. `to_model()`
       still returns `list[Item]` as a compatibility view; `to_resource()` and
       `client.fetch_resource()` are the safe path when the result will be written back.
-      `EXDATE`/`RDATE` round-trip verbatim via the Phase 1 preservation path; they still
-      need modelling for Phase 2 expansion.
+      `EXDATE`/`RDATE` were round-tripping verbatim here and are now modelled (see Phase 2).
 - [ ] **`VALARM` fidelity.** Only relative negative triggers (`-PT15M`) survive. No absolute
       triggers, no positive offsets, no `REPEAT`/`DURATION`, no `ATTENDEE` on EMAIL alarms,
       no `RELATED=END`. Alarms are the thing users notice losing. **Effort: M**
@@ -103,12 +102,15 @@ five methods that could not execute. Details in the commit message. Summary:
 
 **Goal: the agent can reason about *when*, and does not shift the user's events.**
 
-- [ ] **`TZID` and `VALUE=DATE`.** `DTSTART;TZID=America/New_York:20260301T090000` parses to
-      a naive datetime — after Phase 1 the VTIMEZONE definition survives but the *reference*
-      to it does not, so the event floats. Separately, an all-day event is indistinguishable
-      from midnight. Both need the same change: a date-time value must carry its timezone
-      reference and its DATE-vs-DATE-TIME nature. *Design decision open — see below.*
-      **Effort: L**
+- [x] **`TZID` and `VALUE=DATE`.** `DateTimeValue` in `m00_datetime.py` carries the wall-clock
+      time, which of the four RFC 5545 forms it is (DATE / FLOATING / UTC / ZONED), and the
+      TZID parameter *verbatim*. Applied to DTSTART, DTEND, DUE, RECURRENCE-ID and RRULE's
+      UNTIL; DTSTAMP and COMPLETED stay plain datetimes, being UTC-only by RFC. `EXDATE` and
+      `RDATE` are now modelled as value lists (a `VALUE=PERIOD` RDATE stays verbatim, being a
+      range rather than a date-time). Plain `datetime`/`date` remain valid input via a
+      coercing validator, so only *reading* changed. Zone resolution is a separate
+      best-effort layer — `aware()`/`to_utc()` return None rather than guess when a TZID
+      cannot be resolved.
 - [ ] **Recurrence expansion.** Given a master plus overrides, produce concrete instances
       over a window. **The single highest-leverage item in this document**: the agent needs
       it to answer "what is on Thursday" or "move next week's standup", and a server needs
@@ -208,13 +210,21 @@ reject it. A master-owns model cannot represent it; a resource wrapper can.
 Revisit if the extra indirection proves annoying in practice — `to_model()` was kept as the
 flat view specifically so the wrapper can stay out of the way for single-component resources.
 
-### D2 — Date-time representation (gates Phase 2)
+### D2 — Date-time representation — **decided: `DateTimeValue`, storing wall time + verbatim TZID** ✅
 
-A calendar date-time is one of three things: a UTC instant, a floating local time, or a
-zoned wall-clock time (`TZID`) — plus DATE-only for all-day. Modelling all four as a bare
-`datetime` cannot work. Options range from a `CalDateTime` value type (correct, wide blast
-radius on every caller comparing `event.dtstart`) to carrying the original parameters
-alongside for faithful *writing* without fixing *interpretation* (cheap, half a fix).
+Implemented. The blast radius turned out to be small: a `mode="before"` validator accepts
+plain `datetime`, `date` and wire strings, and `__eq__` compares against `datetime`, so
+construction and most assertions are unchanged. Two tests reached into datetime internals
+(`.tzinfo`, `.year`) and now state their intent more precisely.
+
+The load-bearing choice is storing **naive wall time plus the TZID string verbatim**, rather
+than resolving to an aware datetime at parse time. Outlook emits TZIDs defined only by the
+VTIMEZONE block inside the same file; resolving-then-reserializing would rewrite that
+reference and break it against the VTIMEZONE Phase 1 preserved. Storing what was on the wire
+round-trips regardless of whether this machine has ever heard of the zone.
+
+Open follow-on: resolving a TZID against the file's *own* VTIMEZONE, which would make
+Outlook-style custom zones computable rather than merely preserved.
 
 ### D3 — `update()` semantics (gates Phase 3)
 

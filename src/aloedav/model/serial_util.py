@@ -4,6 +4,7 @@ from aloedav.model.m00_constant import EventStatus, Transparency
 from aloedav.model.m00_constant import PhoneType, AddressType
 # from aloedav.model.m01_base import Address, Phone, Attendee, RecurrenceRule, Attachment
 from aloedav.model import ModelUtil
+from aloedav.model.m00_datetime import DateTimeValue
 from aloedav.model.m02_vcard import VCARD
 from aloedav.model.m02_vevent import VEVENT
 from aloedav.model.m02_vtodo import VTODO
@@ -215,15 +216,18 @@ def _context_item(data:dict, key:str, params:dict, value:str, line:str=None)->di
     elif key == "CLASS": data["classification"] = value
     elif key == "DESCRIPTION":
         data["description"] = ModelUtil.unescape_text(value)
-    elif key == "DTSTART": data["dtstart"] = parse_dt(value)
-    elif key == "DTEND": data["dtend"] = parse_dt(value)
+    elif key == "DTSTART": data["dtstart"] = DateTimeValue.parse(value, params)
+    elif key == "DTEND": data["dtend"] = DateTimeValue.parse(value, params)
     # Identifies this component as an override of one instance of a recurring
     # series rather than the series master. Without it the two are
     # indistinguishable and collide on filename.
-    elif key == "RECURRENCE-ID": data["recurrence_id"] = parse_dt(value)
+    elif key == "RECURRENCE-ID": data["recurrence_id"] = DateTimeValue.parse(value, params)
     elif key == "DTSTAMP": data["dtstamp"] = parse_dt(value)
-    elif key == "DUE": data["due"] = parse_dt(value)
+    elif key == "DUE": data["due"] = DateTimeValue.parse(value, params)
     elif key == "COMPLETED": data["completed"] = parse_dt(value)
+    elif key in ("EXDATE", "RDATE") and str(params.get("VALUE", "")).upper() != "PERIOD":
+        field = key.lower()
+        data.setdefault(field, []).extend(DateTimeValue.parse_list(value, params))
     elif key == "SEQUENCE": data["sequence"] = int(value)
     elif key == "PRIORITY": data["priority"] = int(value)
     elif key == "PERCENT-COMPLETE": data["percent_complete"] = int(value)
@@ -315,7 +319,7 @@ def _context_item(data:dict, key:str, params:dict, value:str, line:str=None)->di
             elif field == "frequency":
                 r_data["frequency"] = v
             elif field == "until":
-                r_data["until"] = parse_dt(v)
+                r_data["until"] = DateTimeValue.parse(v)
             elif field in ("count", "interval"):
                 try:
                     r_data[field] = int(v)

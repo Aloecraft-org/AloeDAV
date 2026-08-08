@@ -4,6 +4,8 @@ from pydantic import BaseModel, Field, HttpUrl, EmailStr
 from typing import Optional
 from datetime import datetime, timezone
 from abc import ABC, abstractmethod
+from pydantic import field_validator
+from aloedav.model.m00_datetime import DateTimeValue, DateTimeKind
 from aloedav.model.m00_constant import RecurrenceFrequency, AlarmAction, Classification
 from aloedav.model.m00_constant import PhoneType, AddressType
 
@@ -32,7 +34,7 @@ class RecurrenceRule(BaseModel):
     frequency: RecurrenceFrequency
     interval: int = 1
     count: Optional[int] = None
-    until: Optional[datetime] = None
+    until: Optional[DateTimeValue] = None
     by_second: Optional[list[int]] = None
     by_minute: Optional[list[int]] = None
     by_hour: Optional[list[int]] = None
@@ -46,6 +48,11 @@ class RecurrenceRule(BaseModel):
 
     # RRULE parts outside the RFC vocabulary, kept verbatim as "NAME=VALUE".
     unknown_parts: list[str] = Field(default_factory=list)
+
+    @field_validator("until", mode="before")
+    @classmethod
+    def _coerce_until(cls, v):
+        return DateTimeValue.coerce(v)
 
     @classmethod
     def part_names(cls) -> dict[str, str]:
@@ -64,7 +71,7 @@ class RecurrenceRule(BaseModel):
             if name == "FREQ":
                 parts.append(f"FREQ={value.value if hasattr(value, 'value') else value}")
             elif name == "UNTIL":
-                parts.append(f"UNTIL={ModelUtil.format_dt(value)}")
+                parts.append(f"UNTIL={value.to_wire()}")
             elif isinstance(value, list):
                 if not value:
                     continue
@@ -122,7 +129,7 @@ class VCalendar(VItem):
     version: str = "2.0"
 
     summary: Optional[str] = None
-    dtstart: Optional[datetime] = None
+    dtstart: Optional[DateTimeValue] = None
     dtstamp: Optional[datetime] = Field(default_factory=utc_now, description="Creation timestamp")
     description: Optional[str] = None
     sequence: Optional[int] = 0
@@ -130,7 +137,31 @@ class VCalendar(VItem):
     organizer_name: Optional[str] = None
     organizer_email: Optional[EmailStr] = None
     recurrence_rule: Optional[RecurrenceRule] = None
-    recurrence_id: Optional[datetime] = None
+    recurrence_id: Optional[DateTimeValue] = None
+
+    # Instances removed from, and added to, the series the RRULE generates.
+    # Modelled rather than preserved verbatim because expanding a recurrence
+    # has to subtract and add exactly these.
+    exdate: list[DateTimeValue] = Field(default_factory=list)
+    rdate: list[DateTimeValue] = Field(default_factory=list)
+
+    # A plain datetime or date remains valid input: it is read as an absolute
+    # instant, a floating time, or an all-day date according to what it is, so
+    # callers only reach for DateTimeValue when they need a named zone.
+    @field_validator("dtstart", "dtend", "due", "recurrence_id",
+                     mode="before", check_fields=False)
+    @classmethod
+    def _coerce_datetime_value(cls, v):
+        return DateTimeValue.coerce(v)
+
+    @field_validator("exdate", "rdate", mode="before", check_fields=False)
+    @classmethod
+    def _coerce_datetime_values(cls, v):
+        if v is None:
+            return []
+        if isinstance(v, (list, tuple)):
+            return [DateTimeValue.coerce(item) for item in v]
+        return [DateTimeValue.coerce(v)]
     alarms: Optional[list[Alarm]] = []
     attachments: list[Attachment] = []
 
@@ -184,7 +215,7 @@ class CalendarItem(Item):
     calendar_properties: list[str] = Field(default_factory=list)
     calendar_components: list[str] = Field(default_factory=list)
     summary: Optional[str] = None
-    dtstart: Optional[datetime] = None
+    dtstart: Optional[DateTimeValue] = None
     dtstamp: Optional[datetime] = Field(default_factory=utc_now, description="Creation timestamp")
     description: Optional[str] = None
     sequence: Optional[int] = 0
@@ -192,7 +223,31 @@ class CalendarItem(Item):
     organizer_name: Optional[str] = None
     organizer_email: Optional[EmailStr] = None
     recurrence_rule: Optional[RecurrenceRule] = None
-    recurrence_id: Optional[datetime] = None
+    recurrence_id: Optional[DateTimeValue] = None
+
+    # Instances removed from, and added to, the series the RRULE generates.
+    # Modelled rather than preserved verbatim because expanding a recurrence
+    # has to subtract and add exactly these.
+    exdate: list[DateTimeValue] = Field(default_factory=list)
+    rdate: list[DateTimeValue] = Field(default_factory=list)
+
+    # A plain datetime or date remains valid input: it is read as an absolute
+    # instant, a floating time, or an all-day date according to what it is, so
+    # callers only reach for DateTimeValue when they need a named zone.
+    @field_validator("dtstart", "dtend", "due", "recurrence_id",
+                     mode="before", check_fields=False)
+    @classmethod
+    def _coerce_datetime_value(cls, v):
+        return DateTimeValue.coerce(v)
+
+    @field_validator("exdate", "rdate", mode="before", check_fields=False)
+    @classmethod
+    def _coerce_datetime_values(cls, v):
+        if v is None:
+            return []
+        if isinstance(v, (list, tuple)):
+            return [DateTimeValue.coerce(item) for item in v]
+        return [DateTimeValue.coerce(v)]
     alarms: Optional[list[Alarm]] = None
     attachments: Optional[list[Attachment]] = None
 

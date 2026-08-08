@@ -1,6 +1,8 @@
 import unittest
 import json
 from datetime import datetime, date
+from enum import Enum
+from aloedav.model.m00_datetime import DateTimeValue, DateTimeKind
 from aloedav.model.serial_util import webdav_data, to_model
 from aloedav.testdata import TEST_VCARD_FOLDED, TEST_VCARD_SIMPLE, TEST_VEVENT_FOLDED, TEST_VEVENT_SIMPLE
 from aloedav.testdata import TEST_VEVENT_COMPLEX, TEST_VTODO_WITH_ALARM, TEST_VCALENDAR_MIXED, TEST_VCARD_RICH
@@ -9,8 +11,12 @@ from aloedav.testdata import TEST_VEVENT_COMPLEX_DICT, TEST_VTODO_WITH_ALARM_DIC
 
 def json_serial(obj):
     """JSON serializer for objects not serializable by default json code"""
+    if isinstance(obj, DateTimeValue):
+        return obj.to_ical()
     if isinstance(obj, (datetime, date)): # Need to import date as well for date objects
         return obj.isoformat()
+    if isinstance(obj, Enum):
+        return obj.value
     raise TypeError ("Type %s not serializable" % type(obj))
 
 maxDiff = None  # Important: This lets you see the full diff if a test fails
@@ -22,9 +28,11 @@ class TestFuncs(unittest.TestCase):
         so they match the expected dictionary structure.
         """
         def json_serial(obj):
+            if isinstance(obj, DateTimeValue):
+                return obj.to_ical()
             if isinstance(obj, (datetime, date)):
                 return obj.isoformat()
-            if hasattr(obj, "value"):  # Handle Enums (PhoneType, AddressType)
+            if isinstance(obj, Enum):  # PhoneType, AddressType, ...
                 return obj.value
             raise TypeError(f"Type {type(obj)} not serializable")
             
@@ -109,8 +117,8 @@ class TestFuncs(unittest.TestCase):
         self.assertEqual(event.uid, "19970610T172345Z-AF23B2@example.com")
         self.assertEqual(event.summary, "Bastille Day Party")
         # Verify date parsing result
-        self.assertEqual(event.dtstart.year, 1997)
-        self.assertEqual(event.dtstart.month, 7)
+        self.assertEqual(event.dtstart.date(), date(1997, 7, 14))
+        self.assertIs(event.dtstart.kind, DateTimeKind.UTC)
 
     def test_TEST_VEVENT_FOLDED(self):
         # 1. Parse the data

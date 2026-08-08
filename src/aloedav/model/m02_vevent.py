@@ -4,6 +4,7 @@ from datetime import datetime
 from aloedav.model import ModelUtil
 from aloedav.model.m00_constant import EventStatus, Transparency
 from aloedav.model.m01_base import CalendarItem,  VCalendar, Alarm, Attendee, RecurrenceRule, Attachment
+from aloedav.model.m00_datetime import DateTimeValue
 
 class VEVENT(CalendarItem):
     # Event properties
@@ -13,7 +14,7 @@ class VEVENT(CalendarItem):
     location: Optional[str] = None
     attendees: Optional[list[Attendee]] = None
     duration: Optional[str] = None  # ISO 8601
-    dtend: Optional[datetime] = None
+    dtend: Optional[DateTimeValue] = None
     
     # Metadata
     comments: Optional[str] = None
@@ -58,10 +59,10 @@ class VEVENT(CalendarItem):
 
         lines.append(f"DTSTAMP:{format_dt(self.dtstamp)}")
         if self.dtstart:
-            lines.append(f"DTSTART:{format_dt(self.dtstart)}")
+            lines.append(self.dtstart.to_property("DTSTART"))
 
         if self.dtend:
-            lines.append(f"DTEND:{format_dt(self.dtend)}")
+            lines.append(self.dtend.to_property("DTEND"))
         elif self.duration:
             lines.append(f"DURATION:{self.duration}")
 
@@ -116,11 +117,16 @@ class VEVENT(CalendarItem):
 
         # --- Recurrence ID (marks this as an override of one instance) ---
         if self.recurrence_id:
-            lines.append(f"RECURRENCE-ID:{format_dt(self.recurrence_id)}")
+            lines.append(self.recurrence_id.to_property("RECURRENCE-ID"))
 
         # --- Recurrence Rule (RRULE) ---
         if self.recurrence_rule:
             lines.append(f"RRULE:{self.recurrence_rule.to_rrule_string()}")
+
+        # Instances subtracted from and added to the generated series.
+        from aloedav.model.m00_datetime import DateTimeValue
+        lines.extend(DateTimeValue.list_to_properties("EXDATE", self.exdate))
+        lines.extend(DateTimeValue.list_to_properties("RDATE", self.rdate))
 
         # --- Alarms (VALARM) ---
         if self.alarms:
