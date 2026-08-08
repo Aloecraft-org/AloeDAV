@@ -37,13 +37,13 @@ Two corollaries that govern design decisions below:
 |---|---|
 | 0. Correctness floor | **Done** — `38ebfe8` |
 | 1. Fidelity | **In progress** — parser (`a7280f6`) and resource model landed; VALARM/ATTACH/vCard structured values remain |
-| 2. Time | **In progress** — date-time representation landed; expansion and free/busy remain |
+| 2. Time | **In progress** — representation and expansion landed; free/busy remains |
 | 3. Agent ergonomics | Not started |
 | 4. Protocol completeness (client) | Not started |
-| 5. Server | Not started |
+| 5. Server | **In progress** — storage layer and read-only browser view landed; protocol layer next |
 | 6. Breadth | Not started |
 
-Test count: 13 → 146.
+Test count: 13 → 235.
 
 ---
 
@@ -111,10 +111,13 @@ five methods that could not execute. Details in the commit message. Summary:
       coercing validator, so only *reading* changed. Zone resolution is a separate
       best-effort layer — `aware()`/`to_utc()` return None rather than guess when a TZID
       cannot be resolved.
-- [ ] **Recurrence expansion.** Given a master plus overrides, produce concrete instances
-      over a window. **The single highest-leverage item in this document**: the agent needs
-      it to answer "what is on Thursday" or "move next week's standup", and a server needs
-      it to evaluate `time-range` filters. One piece of work, both goals. **Effort: L**
+- [x] **Recurrence expansion.** `expand()` in `m03_occurrence.py`, over `dateutil.rrule`.
+      Runs in the master's wall-clock frame and re-attaches the zone afterwards, which is
+      what makes DST correct: a 9am New York meeting is 14:00Z before the March transition
+      and 13:00Z after. Handles EXDATE/RDATE, COUNT/UNTIL, the BY* vocabulary including
+      BYDAY ordinals and BYSETPOS, DTEND-as-length, DURATION, VTODO's DUE, all-day series,
+      overrides (including ones the rule does not generate, and ones with no master), and
+      windowing that keeps an instance overlapping the window start.
 - [ ] **Free/busy computation** over expanded instances, so the agent can answer "when am I
       free". Builds directly on the above. **Effort: M**
 
@@ -124,6 +127,10 @@ five methods that could not execute. Details in the commit message. Summary:
 
 **Goal: the agent's intent survives contact with the API.**
 
+- [ ] **`LocalCollection` is still component-keyed.** The client-side in-memory collection
+      has the collision the store now avoids: `insert_item` writes `items[item.filename()]`,
+      so a master and an override overwrite each other. Lower stakes than storage was, but
+      it changes an API the tests exercise, so it wants its own pass. **Effort: S**
 - [ ] **`update()` cannot clear a field.** Every subclass uses `if update.field:` truthiness,
       so an agent cannot remove a location, blank a description, or set a priority to 0.
       Verified: all three are silently ignored. pydantic v2's `model_fields_set` gives the
@@ -156,7 +163,19 @@ five methods that could not execute. Details in the commit message. Summary:
 
 ---
 
-## Phase 5 — Server
+## Phase 5 — Server 🔶
+
+### Done
+
+- **Storage layer** (`aloedav.storage`). `Store` interface plus `FileStore`, keyed by
+  resource so a master and its overrides share one file. Content-hash ETags, atomic writes,
+  path-traversal validation, a bounded sync log, and `SyncTokenExpired` for RFC 6578's
+  403 `valid-sync-token`.
+- **Browser view** (`aloedav.web`). Read-only Starlette app over the same `Store` the DAV
+  server will use. Agenda from `expand()`, marking moved instances and distinguishing
+  all-day from midnight and floating from zoned. `python -m aloedav.web --root ./data --demo`
+
+### Remaining
 
 **The architecture already supports this.** `Collection` is the seam: `RemoteCollection`
 turns Collection calls into HTTP requests; a server turns HTTP requests into Collection
@@ -231,9 +250,20 @@ Outlook-style custom zones computable rather than merely preserved.
 Switching to `model_fields_set` is the clean fix but changes behaviour for any caller that
 passes a fully-populated object expecting only truthy fields to apply.
 
-### D4 — Server scope (gates Phase 5)
+### D4 — Server scope — **decided: multi-user** ✅
 
-Single-user local, or multi-user with auth and ACL?
+`user` is a first-class part of the store's addressing from the start, so the layout does
+not have to be retrofitted later. Auth and ACL are not built yet.
+
+### D5 — Stack and storage — **decided: Starlette + filesystem** ✅
+
+Starlette because a DAV server needs arbitrary HTTP verbs (`PROPFIND`, `REPORT`,
+`MKCALENDAR`), which `Route(methods=[...])` takes directly. The blocking store is wrapped in
+`run_in_threadpool` rather than made async, so storage stays plain synchronous code.
+
+Filesystem storage because the project's first principle is not destroying what it does not
+understand, and a layout you can `cat` makes that checkable rather than asserted. `Store` is
+an interface; SQLite drops in unchanged if concurrency or time-range indexing starts to hurt.
 
 ---
 
