@@ -29,6 +29,7 @@ dependencies = {file = ["config/requirements.txt"]}
 test = [
     "pytest>=9.0",
     "coverage",
+    "httpx",          # starlette.testclient
 ]
 
 [tool.pytest.ini_options]

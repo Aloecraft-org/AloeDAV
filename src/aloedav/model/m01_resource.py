@@ -30,6 +30,10 @@ class Resource(BaseModel, ABC):
     etag: Optional[str] = None
     raw_contents: Optional[str] = None
 
+    # The name this resource is actually stored under. A client picks its own
+    # href on PUT and it need not match filename(), so the two are kept apart.
+    stored_name: Optional[str] = None
+
     @property
     @abstractmethod
     def content_type(self) -> str:

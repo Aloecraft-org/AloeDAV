@@ -6,3 +6,6 @@ pydantic[email]
 tzdata
 # RRULE evaluation for recurrence expansion.
 python-dateutil
+# ASGI framework for the browser view and, later, the DAV server.
+starlette
+uvicorn

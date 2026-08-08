@@ -57,6 +57,10 @@ class Occurrence(BaseModel):
     # can tell an edited instance from one the rule produced.
     is_override: bool = False
 
+    # Which stored resource produced this instance, when expansion was handed
+    # one. Lets a caller link an occurrence back to the file it came from.
+    stored_name: Optional[str] = None
+
     @property
     def uid(self) -> Optional[str]:
         return self.component.uid
@@ -88,6 +92,10 @@ def expand(source, start=None, end=None, limit: int = DEFAULT_LIMIT) -> list[Occ
     occurrences = []
     for _uid, group in _group_by_uid(components).items():
         occurrences.extend(_expand_series(group, window, limit))
+    stored_name = getattr(source, "stored_name", None)
+    if stored_name:
+        for occurrence in occurrences:
+            occurrence.stored_name = stored_name
     occurrences.sort(key=lambda o: o.starts_utc())
     return occurrences
 
